@@ -172,7 +172,7 @@ jobs:
         with:
           tag_name: v1.0.0
           name: "MediaBloom v1.0.0 — BloomAudio"
-          target_commitish: \${{ github.sha }}
+          target_commitish: ${{ github.sha }}
           prerelease: false
           draft: false
           files: |
