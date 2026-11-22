@@ -139,3 +139,56 @@ jobs:
           path: source/MediaBloom-SideStore-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
+
+
+  publish-stable:
+    name: Publish MediaBloom v1.0.0
+    # Only the explicit tested release merge commit on main may publish.
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      startsWith(github.event.head_commit.message, 'release: MediaBloom v1.0.0')
+    needs: build-media
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated MediaBloom standalone IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: MediaBloom-SideStore-unsigned.ipa
+          path: release
+
+      - name: Validate published artifact exists and is intact
+        run: |
+          set -e
+          test -s release/MediaBloom-SideStore-unsigned.ipa
+          unzip -t release/MediaBloom-SideStore-unsigned.ipa | tail -n 2
+          (cd release && sha256sum MediaBloom-SideStore-unsigned.ipa > SHA256SUMS.txt)
+          cat release/SHA256SUMS.txt
+
+      - name: Publish MediaBloom v1.0.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: "MediaBloom v1.0.0 — BloomAudio"
+          target_commitish: \${{ github.sha }}
+          prerelease: false
+          draft: false
+          files: |
+            release/MediaBloom-SideStore-unsigned.ipa
+            release/SHA256SUMS.txt
+          body: |
+            ## Primera versión estable — MediaBloom v1.0.0 💜
+            Aplicación iOS multimedia independiente de BloomBox, basada en una segunda instancia de LiveContainer.
+
+            - Reutiliza YouTube y YouTube Music compartidos con BloomBox sin reinstalarlos.
+            - BloomAudio: volumen independiente por app con control flotante movible durante la reproducción.
+            - Escala perceptual de volumen, silencio al 0% y control que guarda el nivel por app.
+            - Interfaz multimedia para video y música; sin funciones de GameBox.
+            - El volumen global de iOS no cambia.
+            - El motor de audio sigue siendo experimental y se activa opcionalmente. Algunas futuras versiones de las apps pueden requerir ajustes.
+
+            IMPORTANTE: instala únicamente esta IPA de MediaBloom-iOS y fírmala con SideStore o un método compatible. Tiene identificador propio (com.kdt.BloomBoxMedia): no desinstales ni reemplaces tu BloomBox principal. Para compartir biblioteca, ambas apps deben usar el mismo App Group autorizado.
+
+            Etiquetas personalizadas en BloomBox / MediaBloom se desarrollarán en una actualización posterior.
