@@ -12,6 +12,7 @@ static const char kMBAudioBaseVolumeKey = 0;
 static NSHashTable *gMBAudioObjects;
 static NSString *gMBAudioGuest;
 static float gMBAudioLastAppliedGain = 1.0f;
+static void MBStartVolumeOverlay(void);
 static IMP gMBAudioAVPlayerSetVolume;
 static IMP gMBAudioAVPlayerPlay;
 static IMP gMBAudioAVPlayerSetRate;
@@ -44,8 +45,14 @@ static float MBCurrentGain(void) {
     if (![shared boolForKey:@"MediaBloomAudioProbeEnabledV1"]) return 1.0f;
     NSString *key = [@"MediaBloomAudioGainV1." stringByAppendingString:gMBAudioGuest ?: @""];
     id value = [shared objectForKey:key];
-    return [value respondsToSelector:@selector(floatValue)]
+    float slider = [value respondsToSelector:@selector(floatValue)]
         ? MBClampVolume([value floatValue]) : 1.0f;
+    // Human hearing does not interpret raw PCM/AVPlayer amplitude linearly.
+    // A 50% control used to mean 0.50 signal (-6 dB) and felt too weak.
+    // The exponent creates a stronger but smooth 0..100% attenuation curve.
+    // 100% is unity, and 0% remains true silence; never amplify > 1.0.
+    if (slider < 0.0001f) return 0.0f;
+    return powf(slider, 2.6f);
 }
 
 static float MBRequestedBaseVolume(id player) {
@@ -64,6 +71,15 @@ static void MBSetOriginalVolume(id player, float requestedVolume) {
         ((void(*)(id, SEL, float))gMBAudioAVAudioPlayerSetVolume)(player, @selector(setVolume:), volume);
     } else if (gMBAudioAVRendererSetVolume && [player isKindOfClass:avRenderer]) {
         ((void(*)(id, SEL, float))gMBAudioAVRendererSetVolume)(player, @selector(setVolume:), volume);
+    }
+}
+
+static void MBApplyLiveGain(void) {
+    // The floating slider runs in the guest process. Native player setters
+    // are called directly, not through our hooks, so changes apply immediately.
+    gMBAudioLastAppliedGain = MBCurrentGain();
+    for (id player in gMBAudioObjects.allObjects) {
+        MBSetOriginalVolume(player, MBRequestedBaseVolume(player));
     }
 }
 
@@ -166,6 +182,9 @@ static void MBInstallAudioHooks(void) {
                 MBSetOriginalVolume(player, MBRequestedBaseVolume(player));
             }
         }];
+        // UIKit volume bubble lives in the same guest scene. Unlike the
+        // launcher slider, it stays reachable while content is playing.
+        MBStartVolumeOverlay();
         NSLog(@"[BloomAudio] installed for %@ (AVPlayer=%d, AudioPlayer=%d, Renderer=%d)",
               guest, gMBAudioAVPlayerSetVolume != NULL,
               gMBAudioAVAudioPlayerSetVolume != NULL,
