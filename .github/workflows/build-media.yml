@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+      - feature/standalone-media-ipa
   workflow_dispatch:
 
 concurrency:
@@ -46,6 +47,29 @@ jobs:
 
       - name: Apply independent MediaBloom identity and protect primary BloomBox
         run: python3 ../media-tools/scripts/prepare_media.py
+
+      - name: Overlay opt-in BloomAudio prototype into MediaBloom only
+        run: python3 ../media-tools/scripts/apply_audio.py
+
+      - name: Check BloomAudio live controls and perceived-volume curve
+        run: python3 ../media-tools/tests/test_bloomaudio_v03.py
+
+      - name: Verify BloomAudio is off by default and restricted to MediaBloom
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          tweak = Path("TweakLoader/TweakLoader.m").read_text()
+          ui = Path("LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift").read_text()
+          assert "MBInstallAudioHooks();" in tweak
+          assert 'com.kdt.bloomboxmedia' in tweak
+          assert 'MediaBloomAudioProbeEnabledV1' in tweak
+          assert 'MediaBloomAudioProbeEnabledV1' in ui
+          assert 'private var audioProbeEnabled = false' in ui
+          assert 'BloomBoxMediaAudioSlider' in ui
+          assert 'com.google.ios.youtube' in tweak
+          assert 'com.google.ios.youtubemusic' in tweak
+          print("PASS: media-only, opt-in, per-app BloomAudio prototype")
+          PY
 
       - name: Validate isolated identifiers BEFORE compiling
         run: |
