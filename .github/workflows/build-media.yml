@@ -51,6 +51,9 @@ jobs:
       - name: Overlay opt-in BloomAudio prototype into MediaBloom only
         run: python3 ../media-tools/scripts/apply_audio.py
 
+      - name: Check BloomAudio live controls and perceived-volume curve
+        run: python3 ../media-tools/tests/test_bloomaudio_v03.py
+
       - name: Verify BloomAudio is off by default and restricted to MediaBloom
         run: |
           python3 - <<'PY'
