@@ -7,7 +7,9 @@ Actions calls it. No primary BloomBox source code or IPA is modified.
 from pathlib import Path
 
 ROOT = Path(".")
-HOOK = Path("../media-tools/audio/BloomAudioRuntime.inc").read_text()
+HOOK = (Path("../media-tools/audio/BloomAudioRuntime.inc").read_text()
+        + "\n"
+        + Path("../media-tools/audio/BloomAudioOverlay.inc").read_text())
 LOADER = ROOT / "TweakLoader/TweakLoader.m"
 SWIFT = ROOT / "LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift"
 
@@ -59,8 +61,8 @@ def main():
         '                        }\n'
         '                        .tint(.purple)\n'
         '                        Text(english\n'
-        '                             ? "Optional per-app volume. Enable and reopen YouTube or YouTube Music. This may not work with all playback engines."\n'
-        '                             : "Volumen opcional por app. Actívalo y vuelve a abrir YouTube o YouTube Music. Algunos motores de reproducción podrían no responder.")\n'
+        '                             ? "Separate volume for YouTube and YouTube Music. Reopen the app after enabling, then use the floating speaker button during playback."\n'
+        '                             : "Volumen independiente para YouTube y YouTube Music. Actívalo, vuelve a abrir la app y usa el botón flotante del altavoz mientras reproduce.")\n'
         '                            .font(.caption)\n'
         '                            .foregroundStyle(.secondary)\n'
         '                    }\n'
@@ -140,6 +142,8 @@ private struct BloomBoxMediaAudioSlider: View {
     SWIFT.write_text(swift)
     assert 'MediaBloomAudioProbeEnabledV1' in loader and 'MediaBloomAudioProbeEnabledV1' in swift
     assert "MBInstallAudioHooks();" in loader
+    assert "MBStartVolumeOverlay();" in loader
+    assert "MBVolumePassThroughWindow" in loader
     assert "BloomBoxMediaAudioSlider(app: app, english: english)" in swift
     print("PASS: opt-in BloomAudio runtime and per-app sliders applied to Media-only source")
 
