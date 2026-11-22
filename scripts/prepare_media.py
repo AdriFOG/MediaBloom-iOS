@@ -47,6 +47,11 @@ def main() -> None:
     )
     rewrite(
         ".github/build_github.sh",
+        'CFBundleURLSchemes:0 string sidestore"',
+        'CFBundleURLSchemes:0 string mediabloom-sidestore"',
+    )
+    rewrite(
+        ".github/build_github.sh",
         "com.kdt.livecontainer.LiveWidget",
         IDENTIFIER + ".LiveWidget",
     )
