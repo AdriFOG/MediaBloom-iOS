@@ -37,6 +37,11 @@ def check(ipa: Path) -> None:
         schemes = info["CFBundleURLTypes"][0]["CFBundleURLSchemes"]
         assert schemes == [EXPECTED_SCHEME], f"Unsafe URL scheme: {schemes!r}"
         assert "livecontainer" not in schemes, "Cannot hijack primary instance URL scheme"
+        other_schemes = [s for item in info["CFBundleURLTypes"]
+                         for s in item.get("CFBundleURLSchemes", [])]
+        assert "sidestore" not in other_schemes, (
+            "MediaBloom must not hijack the main SideStore URL scheme", other_schemes)
+        assert "mediabloom-sidestore" in other_schemes or "+SideStore" not in ipa.name
         # Exact same shared group is intentional: guest apps can use LC shared storage.
         alt_groups = info.get("ALTAppGroups", [])
         if "+SideStore" in ipa.name:
