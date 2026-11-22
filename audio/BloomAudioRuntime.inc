@@ -11,6 +11,7 @@
 static const char kMBAudioBaseVolumeKey = 0;
 static NSHashTable *gMBAudioObjects;
 static NSString *gMBAudioGuest;
+static float gMBAudioLastAppliedGain = 1.0f;
 static IMP gMBAudioAVPlayerSetVolume;
 static IMP gMBAudioAVPlayerPlay;
 static IMP gMBAudioAVPlayerSetRate;
@@ -141,6 +142,7 @@ static void MBInstallAudioHooks(void) {
         dlopen("/System/Library/Frameworks/AVFoundation.framework/AVFoundation", RTLD_LAZY);
         gMBAudioGuest = [guest copy];
         gMBAudioObjects = [NSHashTable weakObjectsHashTable];
+        gMBAudioLastAppliedGain = MBCurrentGain();
         gMBAudioAVPlayerSetVolume = MBHookInstanceMethod(
             @"AVPlayer", @selector(setVolume:), (IMP)MBAVPlayerSetVolume);
         gMBAudioAVPlayerPlay = MBHookInstanceMethod(
@@ -157,6 +159,9 @@ static void MBInstallAudioHooks(void) {
         // Shared defaults may be changed by MediaBloom while a guest is playing.
         // Reapply through original setters, never recursively through hooks.
         [NSTimer scheduledTimerWithTimeInterval:0.3 repeats:YES block:^(NSTimer *timer) {
+            float gain = MBCurrentGain();
+            if (fabsf(gain - gMBAudioLastAppliedGain) < 0.001f) return;
+            gMBAudioLastAppliedGain = gain;
             for (id player in gMBAudioObjects.allObjects) {
                 MBSetOriginalVolume(player, MBRequestedBaseVolume(player));
             }
