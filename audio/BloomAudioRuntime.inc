@@ -140,7 +140,7 @@ static void MBInstallAudioHooks(void) {
         // Explicitly load AVFoundation only in supported opted-in Media guests.
         // On a future framework API change, missing selectors are simply skipped.
         dlopen("/System/Library/Frameworks/AVFoundation.framework/AVFoundation", RTLD_LAZY);
-        gMBAudioGuest = [guest copy];
+        gMBAudioGuest = [guest.lowercaseString copy];
         gMBAudioObjects = [NSHashTable weakObjectsHashTable];
         gMBAudioLastAppliedGain = MBCurrentGain();
         gMBAudioAVPlayerSetVolume = MBHookInstanceMethod(
