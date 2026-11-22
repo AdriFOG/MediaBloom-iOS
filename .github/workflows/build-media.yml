@@ -1,0 +1,194 @@
+name: MediaBloom - Standalone IPA (experimental)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+      - feature/standalone-media-ipa
+  workflow_dispatch:
+
+concurrency:
+  group: mediabloom-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-media:
+    name: Build independently installable MediaBloom
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - name: Xcode 26.2
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.2'
+
+      - name: Checkout MediaBloom project
+        uses: actions/checkout@v6
+        with:
+          path: media-tools
+
+      # Pin a known-good version. MediaBloom gets its own build and own bundle ID.
+      # This does not build or change the installed primary BloomBox app.
+      - name: Checkout experimental LiveContainer engine
+        uses: actions/checkout@v6
+        with:
+          repository: AdriFOG/Bloombox-iOS
+          ref: 991db585243aa8c2b1ccb454d3d2ea92ea30d7d6
+          submodules: recursive
+          path: source
+
+      - name: Apply independent MediaBloom identity and protect primary BloomBox
+        run: python3 ../media-tools/scripts/prepare_media.py
+
+      - name: Overlay opt-in BloomAudio prototype into MediaBloom only
+        run: python3 ../media-tools/scripts/apply_audio.py
+
+      - name: Check BloomAudio live controls and perceived-volume curve
+        run: python3 ../media-tools/tests/test_bloomaudio_v03.py
+
+      - name: Verify BloomAudio is off by default and restricted to MediaBloom
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          tweak = Path("TweakLoader/TweakLoader.m").read_text()
+          ui = Path("LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift").read_text()
+          assert "MBInstallAudioHooks();" in tweak
+          assert 'com.kdt.bloomboxmedia' in tweak
+          assert 'MediaBloomAudioProbeEnabledV1' in tweak
+          assert 'MediaBloomAudioProbeEnabledV1' in ui
+          assert 'private var audioProbeEnabled = false' in ui
+          assert 'BloomBoxMediaAudioSlider' in ui
+          assert 'com.google.ios.youtube' in tweak
+          assert 'com.google.ios.youtubemusic' in tweak
+          print("PASS: media-only, opt-in, per-app BloomAudio prototype")
+          PY
+
+      - name: Validate isolated identifiers BEFORE compiling
+        run: |
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          info = plistlib.loads(Path("LiveContainer/Info.plist").read_bytes())
+          config = Path("xcconfigs/Global.xcconfig").read_text()
+          assert info["BloomBoxMediaEdition"] is True
+          assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == ["bloomboxmedia"]
+          assert "LIVECONTAINER_BUNDLE_IDENTIFIER = com.kdt.BloomBoxMedia" in config
+          assert "group.com.SideStore.SideStore" in config
+          assert "group.com.rileytestut.AltStore" in config
+          print("PASS: standalone identity and shared App Group contract")
+          PY
+
+      - name: Restore pinned runtime and SideStore dependencies
+        run: python3 Scripts/fetch-bundled-dependencies.py
+
+      - name: Install Rust compiler for iOS pairing component
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Compile original pairing library
+        run: bash Scripts/build-ondevice-pairing.sh
+
+      - name: Generate minimal MediaBloom icon
+        run: |
+          swift Scripts/generate-bloombox-icon.swift
+          swift ../media-tools/scripts/render_media_icon.swift
+
+      - name: Compile standalone MediaBloom IPA
+        env:
+          archive_path: archive
+          scheme: LiveContainer
+        run: |
+          set -eu
+          log="$RUNNER_TEMP/mediabloom-archive.log"
+          if xcodebuild archive -archivePath "$archive_path" -scheme "$scheme" \
+            -project LiveContainer.xcodeproj -sdk iphoneos -arch arm64 \
+            -configuration Release > "$log" 2>&1; then
+            echo "MediaBloom native iOS build succeeded"
+            tail -n 20 "$log"
+          else
+            echo "::error::MediaBloom compile failed; showing real errors"
+            grep -nE 'error:|fatal error|BUILD FAILED|CompileSwift|SwiftCompile|Undefined symbols|Killed:|signal 9' "$log" | tail -n 90 || true
+            tail -n 140 "$log"
+            exit 1
+          fi
+
+      - name: Package original SideStore-compatible LC runtime
+        env:
+          scheme: LiveContainer
+          archive_path: archive
+        run: sh .github/build_github.sh
+
+      - name: Reject unsafe IPA identity and verify shared extensions
+        run: |
+          python3 ../media-tools/scripts/verify_media.py LiveContainer+SideStore.ipa LiveContainer.ipa
+          cp LiveContainer+SideStore.ipa MediaBloom-SideStore-unsigned.ipa
+
+      - name: Upload independent test IPA (never BloomBox primary)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MediaBloom-SideStore-unsigned.ipa
+          path: source/MediaBloom-SideStore-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+
+  publish-stable:
+    name: Publish MediaBloom v1.0.0
+    # Only the explicit tested release merge commit on main may publish.
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      startsWith(github.event.head_commit.message, 'release: MediaBloom v1.0.0')
+    needs: build-media
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated MediaBloom standalone IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: MediaBloom-SideStore-unsigned.ipa
+          path: release
+
+      - name: Validate published artifact exists and is intact
+        run: |
+          set -e
+          test -s release/MediaBloom-SideStore-unsigned.ipa
+          unzip -t release/MediaBloom-SideStore-unsigned.ipa | tail -n 2
+          (cd release && sha256sum MediaBloom-SideStore-unsigned.ipa > SHA256SUMS.txt)
+          cat release/SHA256SUMS.txt
+
+      - name: Publish MediaBloom v1.0.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: "MediaBloom v1.0.0 — BloomAudio"
+          target_commitish: ${{ github.sha }}
+          prerelease: false
+          draft: false
+          files: |
+            release/MediaBloom-SideStore-unsigned.ipa
+            release/SHA256SUMS.txt
+          body: |
+            ## Primera versión estable — MediaBloom v1.0.0 💜
+            Aplicación iOS multimedia independiente de BloomBox, basada en una segunda instancia de LiveContainer.
+
+            - Reutiliza YouTube y YouTube Music compartidos con BloomBox sin reinstalarlos.
+            - BloomAudio: volumen independiente por app con control flotante movible durante la reproducción.
+            - Escala perceptual de volumen, silencio al 0% y control que guarda el nivel por app.
+            - Interfaz multimedia para video y música; sin funciones de GameBox.
+            - El volumen global de iOS no cambia.
+            - El motor de audio sigue siendo experimental y se activa opcionalmente. Algunas futuras versiones de las apps pueden requerir ajustes.
+
+            IMPORTANTE: instala únicamente esta IPA de MediaBloom-iOS y fírmala con SideStore o un método compatible. Tiene identificador propio (com.kdt.BloomBoxMedia): no desinstales ni reemplaces tu BloomBox principal. Para compartir biblioteca, ambas apps deben usar el mismo App Group autorizado.
+
+            Etiquetas personalizadas en BloomBox / MediaBloom se desarrollarán en una actualización posterior.
