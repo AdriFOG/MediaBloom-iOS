@@ -10,7 +10,7 @@ func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> NSColor {
 func renderIcon() {
     let background = NSRect(x: 0, y: 0, width: 1024, height: 1024)
     color(0.09, 0.07, 0.18).setFill()
-    background.fill()
+    NSBezierPath(rect: background).fill()
 
     // Compact lavender display panel, no gradients, reflections or glows.
     let panel = NSBezierPath(roundedRect: NSRect(x: 172, y: 286, width: 680, height: 460),
@@ -33,7 +33,8 @@ func renderIcon() {
 
     // Three subtle music lines connect video and music in one emblem.
     color(0.73, 0.67, 0.99).setStroke()
-    for (y, length) in [(245.0, 288.0), (210.0, 198.0), (175.0, 116.0)] {
+    let bars: [(CGFloat, CGFloat)] = [(245, 288), (210, 198), (175, 116)]
+    for (y, length) in bars {
         let line = NSBezierPath()
         line.move(to: NSPoint(x: 512 - length / 2, y: y))
         line.line(to: NSPoint(x: 512 + length / 2, y: y))
