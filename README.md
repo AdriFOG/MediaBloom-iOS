@@ -4,9 +4,9 @@
 
 ## Experimental standalone build
 
-The IPA is compiled and uploaded in this repository's **Actions** tab as
+The signed-ready (unsigned) IPA is published in **Releases**, and Actions also produces experimental artifacts named
 **MediaBloom-SideStore-unsigned.ipa**. It is intended to be signed with SideStore
-or a compatible installer before installation. This is a preview, not a release.
+or a compatible installer before installation. Stable release is v1.0.0 after physical-device validation. Sign with SideStore or a compatible installer.
 
 - Standalone host ID: \`com.kdt.BloomBoxMedia\`
 - Standalone launch URL: \`bloomboxmedia://\`
@@ -16,7 +16,7 @@ or a compatible installer before installation. This is a preview, not a release.
 - Shows recognized **shared** media apps such as YouTube, YouTube Music, Spotify,
   VLC and other supported multimedia clients.
 - Does **not** provide a gaming launcher. Games are blocked from the media host.
-- **BloomAudio independent volume is planned, not yet implemented.**
+- **BloomAudio** volume (YouTube/YouTube Music) includes optional live controls inside apps; verified on iPhone in v0.3.
 
 ## Safety / never overwrite your working BloomBox
 
