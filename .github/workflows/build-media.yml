@@ -3,12 +3,15 @@ name: MediaBloom - Standalone IPA (experimental)
 on:
   push:
     branches:
-      - feature/standalone-media-ipa
       - main
   pull_request:
     branches:
       - main
   workflow_dispatch:
+
+concurrency:
+  group: mediabloom-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
