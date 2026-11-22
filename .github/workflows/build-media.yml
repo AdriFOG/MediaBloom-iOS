@@ -54,6 +54,12 @@ jobs:
       - name: Check BloomAudio live controls and perceived-volume curve
         run: python3 ../media-tools/tests/test_bloomaudio_v03.py
 
+      - name: Read BloomBox shared media labels in MediaBloom
+        run: python3 ../media-tools/scripts/apply_media_tags.py
+
+      - name: Check shared media labels without breaking audio
+        run: python3 ../media-tools/tests/test_shared_media_labels.py
+
       - name: Verify BloomAudio is off by default and restricted to MediaBloom
         run: |
           python3 - <<'PY'
