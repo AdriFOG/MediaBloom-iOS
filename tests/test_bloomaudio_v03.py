@@ -37,7 +37,7 @@ def gain(x):
 
 assert gain(0.0) == 0.0
 assert gain(1.0) == 1.0
-assert 0.0 < gain(0.2) < gain(0.03)
+assert 0.0 < gain(0.2) < 0.03
 assert gain(0.5) < 0.2
 assert gain(0.8) < 0.6
 assert all(gain(i / 100) <= gain((i + 1) / 100) for i in range(100))
