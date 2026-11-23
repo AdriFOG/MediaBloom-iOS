@@ -31,17 +31,19 @@ struct MBGlassPanel: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        // The main interface prefers dark mode, so an unqualified material
-        // becomes dark charcoal. Force LIGHT material on the pane only;
-        // the surrounding MediaBloom theme remains unchanged.
-        let strength = max(0, min(1, (opacity - 0.48) / 0.46))
-        let colorWash = 0.035 + 0.24 * strength
-        return shape
-            .fill(.ultraThinMaterial)
-            .environment(\.colorScheme, .light)
-            .overlay(shape.fill(tint.opacity(colorWash)))
-            .overlay(shape.stroke(Color.white.opacity(0.48), lineWidth: 0.8))
-            .shadow(color: Color.black.opacity(0.08), radius: 8, y: 3)
+        let amount = max(0, min(1, opacity))
+        return ZStack {
+            // At 0% no material, wash, shadow, or stroke remains; background
+            // really is transparent. Keep the material light in dark MediaBloom.
+            if amount > 0.001 {
+                shape.fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .light)
+                    .opacity(amount * 0.90)
+                shape.fill(tint.opacity(amount * 0.22))
+                shape.stroke(Color.white.opacity(amount * 0.42), lineWidth: 0.8)
+            }
+        }
+        .clipShape(shape)
     }
 }
 
@@ -55,6 +57,15 @@ enum MBColorHex {
         return Color(red: Double((rgb >> 16) & 255) / 255,
                      green: Double((rgb >> 8) & 255) / 255,
                      blue: Double(rgb & 255) / 255)
+    }
+
+    static func dark(_ text: String) -> Bool {
+        let normalized = text.replacingOccurrences(of: "#", with: "")
+        guard let rgb = UInt64(normalized, radix: 16), normalized.count == 6 else { return false }
+        let r = Double((rgb >> 16) & 255) / 255
+        let g = Double((rgb >> 8) & 255) / 255
+        let b = Double(rgb & 255) / 255
+        return r * 0.2126 + g * 0.7152 + b * 0.0722 < 0.45
     }
 
     static func hex(_ color: Color) -> String {
@@ -151,6 +162,7 @@ private struct MBPhotosSelection: UIViewControllerRepresentable {
 
 struct MediaBloomAppearanceSheet: View {
     let onOpenAdvanced: () -> Void
+    let onManageMediaLabels: () -> Void
     @Environment(\.dismiss) private var dismiss
     @AppStorage("BloomBoxPreferredLanguage", store: LCUtils.appGroupUserDefault)
     private var language = "system"
@@ -160,7 +172,8 @@ struct MediaBloomAppearanceSheet: View {
     @AppStorage("MediaBloomMixCardHexV1") private var mix = "CBCDC9"
     @AppStorage("MediaBloomWallpaperEnabledV1") private var enabled = true
     @AppStorage("MediaBloomWallpaperBlurV1") private var blur = 14.0
-    @AppStorage("MediaBloomGlassOpacityV1") private var glassOpacity = 0.72
+    @AppStorage("MediaBloomGlassOpacityV1") private var glassOpacity = 0.35
+    @AppStorage("MediaBloomGlassTintHexV1") private var glassTint = "F5F4F1"
     @AppStorage("MediaBloomAudioProbeEnabledV1", store: LCUtils.appGroupUserDefault)
     private var audioEnabled = false
     @State private var showPhotos = false
@@ -180,6 +193,7 @@ struct MediaBloomAppearanceSheet: View {
                 wallpaperSection
                 paletteSection
                 glassSection
+                mediaTagsSection
                 audioSection
                 advancedSection
             }
@@ -263,13 +277,19 @@ struct MediaBloomAppearanceSheet: View {
             Button(t("Restaurar colores originales", "Restore default colors")) {
                 accent = "FF896A"; background = "0E0F11"
                 card = "F5F4F1"; mix = "CBCDC9"
-                glassOpacity = 0.72
+                glassOpacity = 0.35; glassTint = "F5F4F1"
             }
         }
     }
 
     private var glassSection: some View {
         Section(header: Text(t("Transparencia de tarjetas", "Card transparency"))) {
+            ColorPicker(t("Color del cristal", "Glass color"),
+                        selection: Binding(
+                            get: { MBColorHex.color(glassTint) },
+                            set: { glassTint = MBColorHex.hex($0) }),
+                        supportsOpacity: false)
+
             VStack(alignment: .leading, spacing: 9) {
                 HStack {
                     Text(t("Efecto cristal", "Frosted glass"))
@@ -278,10 +298,10 @@ struct MediaBloomAppearanceSheet: View {
                         .monospacedDigit()
                         .foregroundColor(.secondary)
                 }
-                Slider(value: $glassOpacity, in: 0.48...0.94, step: 0.02)
+                Slider(value: $glassOpacity, in: 0...1, step: 0.01)
                     .tint(MBColorHex.color(accent))
                 HStack {
-                    Text(t("Más transparente", "More transparent"))
+                    Text(t("0% · Invisible", "0% · Invisible"))
                     Spacer()
                     Text(t("Más sólido", "More solid"))
                 }
@@ -301,6 +321,19 @@ struct MediaBloomAppearanceSheet: View {
             Text(t("Después de activarlo, vuelve a abrir las apps multimedia. El volumen general se combina con el volumen individual.",
                    "Reopen media apps after enabling. Master and individual gain combine."))
                 .font(.footnote).foregroundColor(.secondary)
+        }
+    }
+
+    private var mediaTagsSection: some View {
+        Section(header: Text(t("Etiquetas compartidas", "Shared media labels"))) {
+            Button(action: onManageMediaLabels) {
+                Label(t("Organizar etiquetas de apps", "Manage app labels"),
+                      systemImage: "tag")
+            }
+            Text(t("Música, video, ocultar o automático. Se sincronizan con BloomBox.",
+                   "Music, video, hidden, or automatic. Shared with BloomBox."))
+                .font(.footnote)
+                .foregroundColor(.secondary)
         }
     }
 
