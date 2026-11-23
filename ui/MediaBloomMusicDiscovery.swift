@@ -658,6 +658,22 @@ actor MBMusicCatalogAPI {
         if !model.favoriteArtists.contains(artist.name) { model.toggleArtist(artist.name) }
     }
 
+    // Each actual app opening gets a fresh playlist shuffle. Never start with
+    // the same recording as the previous launch when other choices exist.
+    private func present(_ tracks: [MBMusicTrack]) {
+        guard !tracks.isEmpty else { return }
+        var order = tracks.shuffled()
+        let defaults = UserDefaults.standard
+        if order.count > 1,
+           let last = defaults.string(forKey: "MediaBloomLastInitialRecordingV1"),
+           order[0].id == last {
+            order.swapAt(0, Int.random(in: 1..<order.count))
+        }
+        songs = order
+        defaults.set(order[0].id, forKey: "MediaBloomLastInitialRecordingV1")
+        Task { await MBAlbumArtworkCache.shared.prefetch(Array(order.prefix(6))) }
+    }
+
     func refresh(_ favorites: Set<String>) {
         refreshVersion += 1
         let current = refreshVersion
@@ -665,15 +681,43 @@ actor MBMusicCatalogAPI {
         loadError = nil
         guard !favorites.isEmpty else { loading = false; return }
         loading = true
+        let names = Array(favorites)
         Task {
+            let cached = await MBMusicCatalogAPI.shared.savedMix(for: names)
+            guard current == refreshVersion else { return }
+            if let cached {
+                present(cached.songs)
+                loading = false
+                // A fresh combined cache avoids multiple HTTP calls entirely.
+                if cached.fresh { return }
+            }
             do {
-                let loaded = try await MBMusicCatalogAPI.shared.recommendations(for: Array(favorites))
-                if current == refreshVersion { songs = loaded }
+                let loaded = try await MBMusicCatalogAPI.shared.recommendations(for: names)
+                guard current == refreshVersion else { return }
+                if !loaded.isEmpty {
+                    await MBMusicCatalogAPI.shared.saveMix(loaded, for: names)
+                    if cached == nil { present(loaded) }
+                    // Keep the cached shuffled order in this session; new data
+                    // becomes available on the next start without a visual jump.
+                    else { songs = mergeOldOrder(songs, with: loaded) }
+                } else if songs.isEmpty {
+                    loadError = "No se encontraron canciones de tus artistas favoritos."
+                }
             } catch {
-                if current == refreshVersion { loadError = "No se pudo consultar el catálogo. Intenta de nuevo." }
+                if current == refreshVersion && songs.isEmpty {
+                    loadError = "No se pudo consultar el catálogo. Intenta de nuevo."
+                }
             }
             if current == refreshVersion { loading = false }
         }
+    }
+
+    private func mergeOldOrder(_ current: [MBMusicTrack], with latest: [MBMusicTrack]) -> [MBMusicTrack] {
+        let existing = Set(latest.map(\.id))
+        var result = current.filter { existing.contains($0.id) }
+        let seen = Set(result.map(\.id))
+        result.append(contentsOf: latest.filter { !seen.contains($0.id) }.shuffled())
+        return result
     }
 }
 
@@ -689,6 +733,7 @@ struct MBMusicRecommendationCard: View {
     let playerAvailable: Bool
     let english: Bool
     let theme: MBReferenceTheme
+    @State private var savedCoverImage: UIImage?
     @Binding var currentIndex: Int
     let onOpenSong: (MBMusicTrack) -> Void
     let onSelectArtists: () -> Void
@@ -710,6 +755,15 @@ struct MBMusicRecommendationCard: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipShape(RoundedRectangle(cornerRadius: 29, style: .continuous))
+        }
+        .task(id: currentSong?.coverReleaseID) {
+            let requestedID = currentSong?.coverReleaseID
+            savedCoverImage = nil
+            guard let requestedID,
+                  let bytes = await MBAlbumArtworkCache.shared.bytes(for: requestedID),
+                  !Task.isCancelled,
+                  currentSong?.coverReleaseID == requestedID else { return }
+            savedCoverImage = UIImage(data: bytes)
         }
     }
 
@@ -814,18 +868,12 @@ struct MBMusicRecommendationCard: View {
 
     @ViewBuilder
     private func coverBackground(_ track: MBMusicTrack, size: CGSize) -> some View {
-        if let artworkURL = track.coverURL {
-            AsyncImage(url: artworkURL) { state in
-                if let image = state.image {
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: size.width, height: size.height)
-                        .clipped()
-                } else {
-                    geometricBackground(size: size)
-                }
-            }
+        if track.coverReleaseID != nil, let savedCoverImage {
+            Image(uiImage: savedCoverImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size.width, height: size.height)
+                .clipped()
         } else {
             geometricBackground(size: size)
         }
