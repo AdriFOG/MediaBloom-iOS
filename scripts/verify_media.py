@@ -57,6 +57,16 @@ def check(ipa: Path) -> None:
             plug_id = plug.get("CFBundleIdentifier", "")
             if not plug_id.startswith(MEDIA_ID + "."):
                 raise RuntimeError(f"Extension ID can collide with BloomBox: {plugin_path}: {plug_id}")
+        # MediaBloom must contain its OWN Control Center extension; a correct
+        # host IPA alone would install but expose no control buttons on iOS.
+        controls_info_path = HOST + "PlugIns/ManzanaExpiryWidget.appex/Info.plist"
+        assert controls_info_path in names, "MediaBloom Control Center extension absent"
+        controls = plistlib.loads(archive.read(controls_info_path))
+        assert controls.get("CFBundleDisplayName") == "MediaBloom Controles", controls
+        assert controls.get("NSExtension", {}).get("NSExtensionPointIdentifier") == "com.apple.widgetkit-extension"
+        assert controls.get("CFBundleIdentifier") == MEDIA_ID + ".ManzanaExpiryWidget", controls
+        assert HOST + "PlugIns/ManzanaExpiryWidget.appex/ManzanaExpiryWidget" in names, "No media controls executable"
+
         # Guarantee that OS-localized names do not say BloomBox instead of Media.
         for path in names:
             if path.startswith(HOST) and path.endswith(".lproj/InfoPlist.strings"):
