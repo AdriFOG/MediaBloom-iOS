@@ -22,6 +22,22 @@ struct MBReferenceTheme {
     }
 }
 
+// Native frosted glass with a light, adjustable overlay for readable dark text.
+// Uses only iOS 15-compatible materials and never changes the system wallpaper.
+struct MBGlassPanel: View {
+    let tint: Color
+    let opacity: Double
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return shape
+            .fill(.ultraThinMaterial)
+            .overlay(shape.fill(tint.opacity(max(0.48, min(0.96, opacity)))))
+            .overlay(shape.stroke(Color.white.opacity(0.36), lineWidth: 0.7))
+    }
+}
+
 enum MBColorHex {
     static func color(_ text: String) -> Color {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -137,6 +153,7 @@ struct MediaBloomAppearanceSheet: View {
     @AppStorage("MediaBloomMixCardHexV1") private var mix = "CBCDC9"
     @AppStorage("MediaBloomWallpaperEnabledV1") private var enabled = true
     @AppStorage("MediaBloomWallpaperBlurV1") private var blur = 14.0
+    @AppStorage("MediaBloomGlassOpacityV1") private var glassOpacity = 0.72
     @AppStorage("MediaBloomAudioProbeEnabledV1", store: LCUtils.appGroupUserDefault)
     private var audioEnabled = false
     @State private var showPhotos = false
@@ -155,6 +172,7 @@ struct MediaBloomAppearanceSheet: View {
             Form {
                 wallpaperSection
                 paletteSection
+                glassSection
                 audioSection
                 advancedSection
             }
@@ -238,7 +256,35 @@ struct MediaBloomAppearanceSheet: View {
             Button(t("Restaurar colores originales", "Restore default colors")) {
                 accent = "FF896A"; background = "0E0F11"
                 card = "F5F4F1"; mix = "CBCDC9"
+                glassOpacity = 0.72
             }
+        }
+    }
+
+    private var glassSection: some View {
+        Section(header: Text(t("Transparencia de tarjetas", "Card transparency"))) {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack {
+                    Text(t("Efecto cristal", "Frosted glass"))
+                    Spacer()
+                    Text("\(Int((glassOpacity * 100).rounded()))%")
+                        .monospacedDigit()
+                        .foregroundColor(.secondary)
+                }
+                Slider(value: $glassOpacity, in: 0.48...0.94, step: 0.02)
+                    .tint(MBColorHex.color(accent))
+                HStack {
+                    Text(t("Más transparente", "More transparent"))
+                    Spacer()
+                    Text(t("Más sólido", "More solid"))
+                }
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            }
+            Text(t("Los paneles difuminan el fondo, pero mantienen los nombres y botones legibles.",
+                   "Panels blur the wallpaper while keeping labels and buttons readable."))
+                .font(.footnote)
+                .foregroundColor(.secondary)
         }
     }
 
