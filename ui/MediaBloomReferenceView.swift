@@ -154,6 +154,7 @@ struct MediaBloomReferenceView: View {
             audioEnabled = true
             return // Reopen a guest for new audio hooks to become active.
         }
+        if safeMasterVolume > 0.001 { previousMasterVolume = safeMasterVolume }
         let next = safeMasterVolume < 0.001 ? max(0.05, previousMasterVolume) : 0
         setMasterVolume(next)
         LCUtils.appGroupUserDefault.synchronize()
@@ -670,57 +671,10 @@ struct MediaBloomReferenceView: View {
     }
 
     private func individualVolumeEditor(_ app: MediaBloomHomeApp) -> some View {
-        let liveVolume = model.apps.first(where: { $0.id == app.id })?.volume ?? app.volume
-        return NavigationView {
-            VStack(spacing: 18) {
-                appIcon(app, size: 66)
-                Text(app.name)
-                    .font(.headline)
-                Text(t("Volumen individual", "Individual volume"))
-                    .font(.title3.weight(.bold))
-                Slider(value: Binding(
-                    get: { model.apps.first(where: { $0.id == app.id })?.volume ?? liveVolume },
-                    set: { value in
-                        guard app.volumeAvailable, audioEnabled else { return }
-                        if let current = model.apps.first(where: { $0.id == app.id }) {
-                            model.select(current)
-                            model.setVolume(value)
-                        }
-                    }), in: 0...1, step: 0.01) { editing in
-                        if !editing {
-                            LCUtils.appGroupUserDefault.synchronize()
-                            model.onVolumeCommit()
-                        }
-                    }
-                    .tint(theme.coral)
-                    .disabled(!app.volumeAvailable || !audioEnabled)
-                Text("\(Int((model.apps.first(where: { $0.id == app.id })?.volume ?? liveVolume) * 100).rounded())%")
-                    .font(.title2.monospacedDigit())
-                Text(t("El volumen general y este ajuste se combinan. No modifican el volumen de iOS.",
-                       "Master and individual volume work together. iOS device volume is unchanged."))
-                    .multilineTextAlignment(.center)
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-                if !audioEnabled {
-                    Button(t("Activar BloomAudio", "Enable BloomAudio")) { audioEnabled = true }
-                        .buttonStyle(.borderedProminent)
-                } else if !app.volumeAvailable {
-                    Text(t("Esta app aún no es compatible con el control individual.",
-                           "Individual gain is not supported by this app yet."))
-                        .font(.footnote).foregroundColor(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(24)
-            .navigationTitle(t("Audio de app", "App audio"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(t("Listo", "Done")) { individualApp = nil }
-                }
-            }
-        }
-        .navigationViewStyle(.stack)
+        MBIndividualAudioSheet(app: app, model: model,
+                               audioEnabled: $audioEnabled,
+                               accent: theme.coral, english: english,
+                               onDone: { individualApp = nil })
     }
 
 }

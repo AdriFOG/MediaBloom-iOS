@@ -153,67 +153,10 @@ struct MediaBloomAppearanceSheet: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text(t("Fondo de pantalla", "Wallpaper"))) {
-                    HStack(spacing: 12) {
-                        Button { showPhotos = true } label: {
-                            Label(t("Fotos", "Photos"), systemImage: "photo.on.rectangle")
-                        }
-                        Button { showFiles = true } label: {
-                            Label(t("Archivos", "Files"), systemImage: "folder")
-                        }
-                    }
-                    Toggle(t("Mostrar fondo", "Show wallpaper"), isOn: $enabled)
-                        .disabled(!hasWallpaper)
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text(t("Desenfoque", "Blur"))
-                            Spacer()
-                            Text("\(Int(blur))")
-                        }
-                        Slider(value: $blur, in: 0...40, step: 1)
-                    }
-                    .disabled(!enabled || !hasWallpaper)
-                    if hasWallpaper {
-                        Button(role: .destructive) {
-                            MBWallpaperStore.remove()
-                            hasWallpaper = false
-                            enabled = false
-                            MBWallpaperStore.notifyChanged()
-                        } label: { Label(t("Quitar fondo", "Remove wallpaper"), systemImage: "trash") }
-                    }
-                    Text(t("La imagen se guarda solo en MediaBloom, sin modificar el fondo del iPhone.",
-                           "The image stays in MediaBloom and does not change your iPhone wallpaper."))
-                        .font(.footnote).foregroundColor(.secondary)
-                }
-                Section(header: Text(t("Colores predominantes", "Main colors"))) {
-                    ColorPicker(t("Color principal", "Accent"), selection: Binding(
-                        get: { MBColorHex.color(accent) },
-                        set: { accent = MBColorHex.hex($0) }), supportsOpacity: false)
-                    ColorPicker(t("Fondo", "Background"), selection: Binding(
-                        get: { MBColorHex.color(background) },
-                        set: { background = MBColorHex.hex($0) }), supportsOpacity: false)
-                    ColorPicker(t("Tarjetas claras", "Light cards"), selection: Binding(
-                        get: { MBColorHex.color(card) },
-                        set: { card = MBColorHex.hex($0) }), supportsOpacity: false)
-                    ColorPicker(t("Tarjeta de música", "Music card"), selection: Binding(
-                        get: { MBColorHex.color(mix) },
-                        set: { mix = MBColorHex.hex($0) }), supportsOpacity: false)
-                    Button(t("Restaurar colores originales", "Restore default colors")) {
-                        accent = "FF896A"; background = "0E0F11"
-                        card = "F5F4F1"; mix = "CBCDC9"
-                    }
-                }
-                Section(header: Text("BloomAudio")) {
-                    Toggle(t("Activar control de audio", "Enable audio control"), isOn: $audioEnabled)
-                    Text(t("Después de activarlo, vuelve a abrir las apps multimedia. El volumen general se combina con el volumen individual.",
-                           "Reopen media apps after enabling. Master and individual gain combine."))
-                        .font(.footnote).foregroundColor(.secondary)
-                }
-                Section {
-                    Button(action: onOpenAdvanced) {
-                        Label(t("Ajustes avanzados", "Advanced settings"), systemImage: "gearshape.2")
-                    }
-                }
+                wallpaperSection
+                paletteSection
+                audioSection
+                advancedSection
             }
             .navigationTitle(t("Apariencia", "Appearance"))
             .navigationBarTitleDisplayMode(.inline)
@@ -242,11 +185,177 @@ struct MediaBloomAppearanceSheet: View {
         .preferredColorScheme(.light)
     }
 
+
+    private var wallpaperSection: some View {
+        Section(header: Text(t("Fondo de pantalla", "Wallpaper"))) {
+            HStack(spacing: 12) {
+                Button { showPhotos = true } label: {
+                    Label(t("Fotos", "Photos"), systemImage: "photo.on.rectangle")
+                }
+                Button { showFiles = true } label: {
+                    Label(t("Archivos", "Files"), systemImage: "folder")
+                }
+            }
+            Toggle(t("Mostrar fondo", "Show wallpaper"), isOn: $enabled)
+                .disabled(!hasWallpaper)
+            VStack(alignment: .leading) {
+                HStack {
+                    Text(t("Desenfoque", "Blur"))
+                    Spacer()
+                    Text("\(Int(blur))")
+                }
+                Slider(value: $blur, in: 0...40, step: 1)
+            }
+            .disabled(!enabled || !hasWallpaper)
+            if hasWallpaper {
+                Button(role: .destructive) {
+                    MBWallpaperStore.remove()
+                    hasWallpaper = false
+                    enabled = false
+                    MBWallpaperStore.notifyChanged()
+                } label: { Label(t("Quitar fondo", "Remove wallpaper"), systemImage: "trash") }
+            }
+            Text(t("La imagen se guarda solo en MediaBloom, sin modificar el fondo del iPhone.",
+                   "The image stays in MediaBloom and does not change your iPhone wallpaper."))
+                .font(.footnote).foregroundColor(.secondary)
+        }
+    }
+
+    private var paletteSection: some View {
+        Section(header: Text(t("Colores predominantes", "Main colors"))) {
+            ColorPicker(t("Color principal", "Accent"), selection: Binding(
+                get: { MBColorHex.color(accent) },
+                set: { accent = MBColorHex.hex($0) }), supportsOpacity: false)
+            ColorPicker(t("Fondo", "Background"), selection: Binding(
+                get: { MBColorHex.color(background) },
+                set: { background = MBColorHex.hex($0) }), supportsOpacity: false)
+            ColorPicker(t("Tarjetas claras", "Light cards"), selection: Binding(
+                get: { MBColorHex.color(card) },
+                set: { card = MBColorHex.hex($0) }), supportsOpacity: false)
+            ColorPicker(t("Tarjeta de música", "Music card"), selection: Binding(
+                get: { MBColorHex.color(mix) },
+                set: { mix = MBColorHex.hex($0) }), supportsOpacity: false)
+            Button(t("Restaurar colores originales", "Restore default colors")) {
+                accent = "FF896A"; background = "0E0F11"
+                card = "F5F4F1"; mix = "CBCDC9"
+            }
+        }
+    }
+
+    private var audioSection: some View {
+        Section(header: Text("BloomAudio")) {
+            Toggle(t("Activar control de audio", "Enable audio control"), isOn: $audioEnabled)
+            Text(t("Después de activarlo, vuelve a abrir las apps multimedia. El volumen general se combina con el volumen individual.",
+                   "Reopen media apps after enabling. Master and individual gain combine."))
+                .font(.footnote).foregroundColor(.secondary)
+        }
+    }
+
+    private var advancedSection: some View {
+        Section {
+            Button(action: onOpenAdvanced) {
+                Label(t("Ajustes avanzados", "Advanced settings"), systemImage: "gearshape.2")
+            }
+        }
+    }
+
     private func saveWallpaper(_ image: UIImage) {
         if MBWallpaperStore.save(image) {
             hasWallpaper = true
             enabled = true
             MBWallpaperStore.notifyChanged()
         } else { imageError = true }
+    }
+}
+
+
+// Keep the per-app sheet separate from the large portrait/landscape view so
+// Xcode can type-check each expression without an exponential ViewBuilder.
+struct MBIndividualAudioSheet: View {
+    let app: MediaBloomHomeApp
+    @ObservedObject var model: MediaBloomHomeModel
+    @Binding var audioEnabled: Bool
+    let accent: Color
+    let english: Bool
+    let onDone: () -> Void
+
+    private func t(_ es: String, _ en: String) -> String { english ? en : es }
+
+    private var currentVolume: Double {
+        model.apps.first(where: { $0.id == app.id })?.volume ?? app.volume
+    }
+
+    private var volumeBinding: Binding<Double> {
+        Binding<Double>(get: { self.currentVolume }, set: { next in
+            guard self.audioEnabled, self.app.volumeAvailable else { return }
+            if let current = self.model.apps.first(where: { $0.id == self.app.id }) {
+                self.model.select(current)
+                self.model.setVolume(next)
+            }
+        })
+    }
+
+    private var guestIcon: some View {
+        Group {
+            if let image = app.icon {
+                Image(uiImage: image).resizable().scaledToFit()
+            } else {
+                Image(systemName: app.symbol)
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(app.color)
+            }
+        }
+        .frame(width: 65, height: 65)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var controlSection: some View {
+        VStack(spacing: 14) {
+            Text(t("Volumen individual", "Individual volume"))
+                .font(.title3.weight(.bold))
+            Slider(value: volumeBinding, in: 0...1, step: 0.01) { editing in
+                if !editing { LCUtils.appGroupUserDefault.synchronize() }
+            }
+            .tint(accent)
+            .disabled(!app.volumeAvailable || !audioEnabled)
+            Text("\(Int((currentVolume * 100).rounded()))%")
+                .font(.title2.monospacedDigit())
+            Text(t("El volumen general y este ajuste se combinan. No modifican el volumen de iOS.",
+                   "Master and individual volume work together. iOS device volume is unchanged."))
+                .multilineTextAlignment(.center)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+            if !audioEnabled {
+                Button(t("Activar BloomAudio", "Enable BloomAudio")) { audioEnabled = true }
+                    .buttonStyle(.borderedProminent)
+            } else if !app.volumeAvailable {
+                Text(t("Esta app aún no admite control individual.",
+                       "This app does not support individual volume yet."))
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 16) {
+                guestIcon
+                Text(app.name).font(.headline)
+                controlSection
+                Spacer(minLength: 0)
+            }
+            .padding(24)
+            .navigationTitle(t("Audio de app", "App audio"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(t("Listo", "Done"), action: onDone)
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
     }
 }
