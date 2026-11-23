@@ -23,6 +23,13 @@ final class MBHapticsDiagnostic: ObservableObject {
     // Capture survives dismissal of Settings. The saved log survives a force-quit.
     @Published private(set) var captureActive = false
     @Published private(set) var recordedEvents: [String] = []
+    @Published private(set) var guestEvents: [String] = []
+    @Published private(set) var guestSamples = 0
+    @Published private(set) var guestLastSample = ""
+    private let guestEnabledKey = "MediaBloomHapticsGuestCaptureV1"
+    private let guestEventsKey = "MediaBloomHapticsGuestEventsV1"
+    private let guestSamplesKey = "MediaBloomHapticsGuestSamplesV1"
+    private let guestUpdatedKey = "MediaBloomHapticsGuestUpdatedV1"
     @Published private(set) var lastSample = ""
     @Published private(set) var sampleCount = 0
     private let eventsKey = "MediaBloomHapticsSavedEventsV1"
@@ -40,6 +47,21 @@ final class MBHapticsDiagnostic: ObservableObject {
         recordedEvents = UserDefaults.standard.stringArray(forKey: eventsKey) ?? []
         lastSample = UserDefaults.standard.string(forKey: sampleKey) ?? ""
         sampleCount = UserDefaults.standard.integer(forKey: sampleCountKey)
+        captureActive = LCUtils.appGroupUserDefault.bool(forKey: guestEnabledKey)
+        refreshGuestLog()
+    }
+
+    func refreshGuestLog() {
+        let shared = LCUtils.appGroupUserDefault
+        shared.synchronize()
+        guestEvents = shared.stringArray(forKey: guestEventsKey) ?? []
+        guestSamples = shared.integer(forKey: guestSamplesKey)
+        if let stamp = shared.object(forKey: guestUpdatedKey) as? Date {
+            guestLastSample = DateFormatter.localizedString(from: stamp,
+                                        dateStyle: .short, timeStyle: .medium)
+        } else {
+            guestLastSample = ""
+        }
     }
 
     private func saveEvent(_ message: String) {
@@ -58,6 +80,13 @@ final class MBHapticsDiagnostic: ObservableObject {
         beginObservation(english: english)
         guard !captureActive else { return }
         captureActive = true
+        let shared = LCUtils.appGroupUserDefault
+        shared.removeObject(forKey: guestEventsKey)
+        shared.removeObject(forKey: guestSamplesKey)
+        shared.removeObject(forKey: guestUpdatedKey)
+        shared.set(true, forKey: guestEnabledKey)
+        shared.synchronize()
+        refreshGuestLog()
         sampleCount = 0
         lastSongSignature = ""
         lastCatalogCheck = ""
@@ -76,12 +105,21 @@ final class MBHapticsDiagnostic: ObservableObject {
     func stopCapture(english: Bool) {
         guard captureActive else { return }
         captureActive = false
+        LCUtils.appGroupUserDefault.set(false, forKey: guestEnabledKey)
+        LCUtils.appGroupUserDefault.synchronize()
+        refreshGuestLog()
         captureTimer?.invalidate()
         captureTimer = nil
         saveEvent(english ? "Capture stopped manually." : "Registro detenido manualmente.")
     }
 
     func clearCapture() {
+        let shared = LCUtils.appGroupUserDefault
+        shared.removeObject(forKey: guestEventsKey)
+        shared.removeObject(forKey: guestSamplesKey)
+        shared.removeObject(forKey: guestUpdatedKey)
+        shared.synchronize()
+        refreshGuestLog()
         recordedEvents = []
         lastSample = ""
         sampleCount = 0
@@ -166,6 +204,7 @@ final class MBHapticsDiagnostic: ObservableObject {
     }
 
     func refresh(english: Bool) {
+        refreshGuestLog()
         hardwareAvailable = CHHapticEngine.capabilitiesForHardware().supportsHaptics
         officialActive = nil
         inspectedISRC = nil
