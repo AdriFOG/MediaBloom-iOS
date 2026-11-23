@@ -38,7 +38,7 @@ def main():
         # Apply the compatible ScrollView initializer after SHA verification.
         if name == "ui/MediaBloomHomeView.swift":
             old = "ScrollView {"
-            marker = "        .scrollIndicators(.hidden)\\n"
+            marker = "        .scrollIndicators(.hidden)"
             if source.count(old) != 1 or source.count(marker) != 1:
                 raise RuntimeError("Unexpected UI scroll source; review before patching")
             source = source.replace(
