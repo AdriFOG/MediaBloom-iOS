@@ -187,16 +187,10 @@ actor MBMusicCatalogAPI {
         return exact
     }
 
-    private func topTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
-        if let cached = recordingCache[artist.id] { return cached }
-        let prefKey = "MediaBloomTopTracksV1." + artist.id
-        let stampKey = prefKey + ".updated"
-        if Date().timeIntervalSince1970 - UserDefaults.standard.double(forKey: stampKey) < cacheAge,
-           let data = UserDefaults.standard.data(forKey: prefKey),
-           let tracks = try? JSONDecoder().decode([MBMusicTrack].self, from: data) {
-            recordingCache[artist.id] = tracks
-            return tracks
-        }
+    // ListenBrainz is an optional POPULARITY signal, not the source of truth
+    // for a band's existence. Small/Spanish-language artists often lack listen
+    // counts, while MusicBrainz still knows their actual released recordings.
+    private func listenBrainzTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
         guard let url = URL(string: "https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/\(artist.id)") else {
             throw URLError(.badURL)
         }
@@ -221,12 +215,180 @@ actor MBMusicCatalogAPI {
             if tracks.count == 12 { break }
         }
         tracks.sort { $0.listenCount > $1.listenCount }
-        recordingCache[artist.id] = tracks
-        if !tracks.isEmpty, let saved = try? JSONEncoder().encode(tracks) {
-            UserDefaults.standard.set(saved, forKey: prefKey)
-            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: stampKey)
+        return tracks
+    }
+
+    // MusicBrainz returns artist-credit as an array of dictionaries and
+    // join-phrase strings. Only allow recordings belonging to a selected MBID;
+    // never leak another artist from a compilation or a similarly named act.
+    private func credits(_ entity: [String: Any], include artistID: String) -> Bool? {
+        guard let raw = entity["artist-credit"] as? [Any] else { return nil }
+        let ids: [String] = raw.compactMap { item in
+            guard let credit = item as? [String: Any],
+                  let artist = credit["artist"] as? [String: Any] else { return nil }
+            return artist["id"] as? String
+        }
+        return ids.contains(artistID)
+    }
+
+    // Official release tracks give us genuine song IDs and album-cover IDs.
+    // This is catalog discovery, not a claim that those songs are "top hits".
+    private func musicBrainzReleaseTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
+        var parts = URLComponents(string: "https://musicbrainz.org/ws/2/release/")!
+        parts.queryItems = [
+            URLQueryItem(name: "artist", value: artist.id),
+            URLQueryItem(name: "status", value: "official"),
+            URLQueryItem(name: "type", value: "album|ep|single"),
+            URLQueryItem(name: "inc", value: "recordings+artist-credits"),
+            URLQueryItem(name: "limit", value: "16"),
+            URLQueryItem(name: "fmt", value: "json")
+        ]
+        guard let url = parts.url else { throw URLError(.badURL) }
+        let json = try await fetchJSON(url, musicBrainz: true)
+        guard let root = json as? [String: Any],
+              let releases = root["releases"] as? [[String: Any]] else {
+            throw URLError(.cannotParseResponse)
+        }
+        var groups: [[MBMusicTrack]] = []
+        for release in releases {
+            guard let releaseID = release["id"] as? String,
+                  UUID(uuidString: releaseID) != nil else { continue }
+            if credits(release, include: artist.id) == false { continue }
+            let album = release["title"] as? String ?? ""
+            let media = release["media"] as? [[String: Any]] ?? []
+            var group: [MBMusicTrack] = []
+            var withinRelease = Set<String>()
+            for medium in media {
+                let entries = medium["tracks"] as? [[String: Any]] ?? []
+                for entry in entries {
+                    guard let recording = entry["recording"] as? [String: Any],
+                          let id = recording["id"] as? String, UUID(uuidString: id) != nil,
+                          let title = recording["title"] as? String,
+                          !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          credits(recording, include: artist.id) != false else { continue }
+                    let unique = title.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                               locale: .current)
+                    guard withinRelease.insert(unique).inserted else { continue }
+                    group.append(MBMusicTrack(
+                        id: id, title: title, artist: artist.name, artistID: artist.id,
+                        album: album, coverReleaseID: releaseID, listenCount: 0))
+                    if group.count >= 12 { break }
+                }
+                if group.count >= 12 { break }
+            }
+            if !group.isEmpty { groups.append(group) }
+        }
+
+        // Round-robin by release, so smaller bands don't get 12 tracks from
+        // only the first album; every result is still a real credited recording.
+        var tracks: [MBMusicTrack] = []
+        var names = Set<String>()
+        for position in 0..<12 {
+            for group in groups where position < group.count {
+                let song = group[position]
+                let key = song.title.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                             locale: .current)
+                if names.insert(key).inserted { tracks.append(song) }
+                if tracks.count >= 12 { return tracks }
+            }
         }
         return tracks
+    }
+
+    // Covers the case of an independently released artist with no official
+    // album metadata yet: the MusicBrainz recordings browser is more complete.
+    private func musicBrainzRecordingTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
+        var parts = URLComponents(string: "https://musicbrainz.org/ws/2/recording/")!
+        parts.queryItems = [
+            URLQueryItem(name: "artist", value: artist.id),
+            URLQueryItem(name: "inc", value: "artist-credits"),
+            URLQueryItem(name: "limit", value: "80"),
+            URLQueryItem(name: "fmt", value: "json")
+        ]
+        guard let url = parts.url else { throw URLError(.badURL) }
+        let json = try await fetchJSON(url, musicBrainz: true)
+        guard let root = json as? [String: Any],
+              let recordings = root["recordings"] as? [[String: Any]] else {
+            throw URLError(.cannotParseResponse)
+        }
+        var tracks: [MBMusicTrack] = []
+        var names = Set<String>()
+        for recording in recordings {
+            guard let id = recording["id"] as? String, UUID(uuidString: id) != nil,
+                  let title = recording["title"] as? String,
+                  !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  credits(recording, include: artist.id) != false else { continue }
+            let key = title.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                    locale: .current)
+            guard names.insert(key).inserted else { continue }
+            tracks.append(MBMusicTrack(
+                id: id, title: title, artist: artist.name, artistID: artist.id,
+                album: "", coverReleaseID: nil, listenCount: 0))
+            if tracks.count >= 12 { break }
+        }
+        return tracks
+    }
+
+    private func discographyTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
+        do {
+            let albums = try await musicBrainzReleaseTracks(artist)
+            if !albums.isEmpty { return albums }
+        } catch {
+            // A release request can fail while an artist's recording browser
+            // still works. Use that public endpoint before giving up.
+        }
+        return try await musicBrainzRecordingTracks(artist)
+    }
+
+    private func topTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
+        if let cached = recordingCache[artist.id], !cached.isEmpty { return cached }
+        // V2 cache does not inherit old popularity-only cache, where missing
+        // Latin/Spanish acts were silently excluded.
+        let prefKey = "MediaBloomRecommendedTracksV2." + artist.id
+        let stampKey = prefKey + ".updated"
+        if Date().timeIntervalSince1970 - UserDefaults.standard.double(forKey: stampKey) < cacheAge,
+           let data = UserDefaults.standard.data(forKey: prefKey),
+           let tracks = try? JSONDecoder().decode([MBMusicTrack].self, from: data),
+           !tracks.isEmpty {
+            recordingCache[artist.id] = tracks
+            return tracks
+        }
+
+        var result: [MBMusicTrack] = []
+        var listenError: Error?
+        do {
+            result = try await listenBrainzTracks(artist)
+        } catch {
+            listenError = error
+        }
+        // Fill sparse ListenBrainz results with actual releases/recordings.
+        // Populated artists retain their original popularity ranking.
+        if result.count < 4 {
+            do {
+                let fallback = try await discographyTracks(artist)
+                var seen = Set(result.map {
+                    $0.title.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                     locale: .current)
+                })
+                for song in fallback {
+                    let key = song.title.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                                 locale: .current)
+                    if seen.insert(key).inserted { result.append(song) }
+                    if result.count >= 12 { break }
+                }
+            } catch {
+                if result.isEmpty { throw error }
+            }
+        }
+        if result.isEmpty, let listenError { throw listenError }
+        if !result.isEmpty {
+            recordingCache[artist.id] = result
+            if let saved = try? JSONEncoder().encode(result) {
+                UserDefaults.standard.set(saved, forKey: prefKey)
+                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: stampKey)
+            }
+        }
+        return result
     }
 
     func recommendations(for favoriteNames: [String]) async throws -> [MBMusicTrack] {
