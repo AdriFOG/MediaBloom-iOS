@@ -51,7 +51,11 @@ def main():
         '    @State private var searchText = ""\n',
         '    @State private var searchText = ""\n'
         '    @AppStorage("MediaBloomAudioProbeEnabledV1", store: LCUtils.appGroupUserDefault)\n'
-        '    private var audioProbeEnabled = false\n',
+        '    private var audioProbeEnabled = false\n'
+        '    @AppStorage("MediaBloomControlTapCountV1", store: LCUtils.appGroupUserDefault)\n'
+        '    private var controlCenterTapCount = 0\n'
+        '    @AppStorage("MediaBloomMasterGainV1", store: LCUtils.appGroupUserDefault)\n'
+        '    private var controlCenterGain = 1.0\n',
         "Media Home enabled switch",
     )
     swift = replace_once(
@@ -71,6 +75,13 @@ def main():
         '                             : "Volumen independiente para YouTube y YouTube Music. Actívalo, vuelve a abrir la app y usa el botón flotante del altavoz mientras reproduce.")\n'
         '                            .font(.caption)\n'
         '                            .foregroundStyle(.secondary)\n'
+        '                        if audioProbeEnabled {\n'
+        '                            Text(english\n'
+        '                                 ? "Control Center: \\(controlCenterTapCount) actions · \\(Int(controlCenterGain * 100))%"\n'
+        '                                 : "Centro de control: \\(controlCenterTapCount) toques · \\(Int(controlCenterGain * 100))%")\n'
+        '                                .font(.caption2.monospacedDigit())\n'
+        '                                .foregroundStyle(.purple.opacity(0.9))\n'
+        '                        }\n'
         '                    }\n'
         '                    .padding(14)\n'
         '                    .background(Color.white.opacity(0.055),\n'
