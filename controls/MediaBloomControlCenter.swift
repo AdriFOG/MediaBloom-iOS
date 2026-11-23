@@ -68,10 +68,19 @@ private enum MBMasterVolume {
             }
             return (name, url)
         }
+        // Do not accept an arbitrary App Group merely because the widget
+        // can open it. It might belong to another store/app, so the Intent
+        // would report success while MediaBloom's real volume never changes.
+        // LiveContainer puts installed guests under the shared "Apps" folder.
         let selected = found.first { entry in
             FileManager.default.fileExists(
                 atPath: entry.1.appendingPathComponent("Apps").path)
-        } ?? found.first
+        } ?? found.first { entry in
+            // A valid MediaBloom suite can also be identified by the flag
+            // the host persisted when the user enabled BloomAudio.
+            UserDefaults(suiteName: entry.0)?
+                .object(forKey: "MediaBloomAudioProbeEnabledV1") != nil
+        }
         guard let chosen = selected,
               let defaults = UserDefaults(suiteName: chosen.0) else {
             NSLog("[MediaBloom] Control Center cannot open an authorized shared App Group. Team: %@", team ?? "unknown")
