@@ -50,4 +50,14 @@ assert 'defaults.set(slider, forKey: masterKey)' in control
 assert 'for guest in guestIDs' not in control
 assert 'MPVolumeView' not in control
 assert 'AVAudioSession.sharedInstance().outputVolume' not in host
+# Material previously inherited the dark app scheme and had an opaque
+# 48–96% wash. This regression test keeps real translucent LIGHT glass.
+assert 'struct MBGlassPanel: View' in host
+assert '.fill(.ultraThinMaterial)' in host
+assert r'.environment(\.colorScheme, .light)' in host
+assert 'let colorWash = 0.035 + 0.24 * strength' in host
+assert 'tint.opacity(max(0.48, min(0.96, opacity)))' not in host
+assert 'MediaBloomGlassOpacityV1' in host
+assert 'private var glassSection: some View' in host
+assert 'MBGlassPanel(tint: theme.white, opacity: glassOpacity' in host
 print('PASS: portrait/landscape polish, wallpaper, colors, independent master + guest gain')
