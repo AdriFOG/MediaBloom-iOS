@@ -1,245 +1,170 @@
-// MediaBloom: user-installed Control Center actions for independent guest audio.
-// Only built by MediaBloom's isolated IPA workflow, never primary BloomBox.
-// iOS owns the actual volume buttons and system volume slider. These six
-// user-added controls change per-guest BloomAudio gain in the shared App Group.
+// MediaBloom: ONE native, system-wide Control Center volume control.
+// This is a ControlWidget extension, not an overlay on another app.
+// Tap cycles through 100 → 75 → 50 → 25 → 0 → 100 percent.
+//
+// Use Apple's supported SF Symbols (not raster asset images) so the icon
+// displays on iOS 18–27. It changes in five visible volume states.
+// Audio changes are per-guest, NEVER the global iPhone output volume.
 import AppIntents
 import Foundation
+import Security
 import SwiftUI
 import WidgetKit
 
 @available(iOSApplicationExtension 18.0, *)
-private enum MBControlAudio {
-    static let music = "com.google.ios.youtubemusic"
-    static let video = "com.google.ios.youtube"
-    static let prefix = "MediaBloomAudioGainV1."
-    static let savedNonZeroPrefix = "MediaBloomControlLastNonZeroV1."
-    static let gainStep: Double = 0.10
+private enum MBMasterVolume {
+    static let kind = "com.kdt.bloomboxmedia.master.volume"
+    static let masterKey = "MediaBloomMasterGainV1"
+    static let guestIDs = [
+        "com.google.ios.youtubemusic",
+        "com.google.ios.youtube"
+    ]
+    static let groupBases = [
+        "group.com.SideStore.SideStore",
+        "group.com.rileytestut.AltStore"
+    ]
 
-    // iOS widget extensions have no Swift SecTask API for reading entitlements.
-    // Probe only the two App Groups declared in THIS widget's entitlements;
-    // containerURL returns nil unless the extension is authorized to use them.
-    // Never pretend a regular UserDefaults store is a cross-app suite.
-    static func sharedDefaults() -> UserDefaults? {
-        let allowed = [
-            "group.com.SideStore.SideStore",
-            "group.com.rileytestut.AltStore"
+    // SideStore may append the signing Team ID to each group.
+    // Discover that Team ID using the PUBLIC keychain API, the same fallback
+    // used by LCSharedUtils.teamIdentifier in LiveContainer. SecTask* is NOT
+    // exposed to Swift app extensions and must not be used here.
+    static func signingTeamID() -> String? {
+        let account = "mediabloom-widget-team-probe"
+        let service = "com.kdt.BloomBoxMedia.ControlCenter"
+        let lookup: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: account,
+            kSecAttrService as String: service
         ]
-        let available = allowed.compactMap { group -> (String, URL)? in
+        var attributes: CFTypeRef?
+        var find = lookup
+        find[kSecReturnAttributes as String] = kCFBooleanTrue
+        var status = SecItemCopyMatching(find as CFDictionary, &attributes)
+        if status == errSecItemNotFound {
+            var add = lookup
+            add[kSecValueData as String] = Data([1])
+            add[kSecReturnAttributes as String] = kCFBooleanTrue
+            status = SecItemAdd(add as CFDictionary, &attributes)
+        }
+        guard status == errSecSuccess,
+              let result = attributes as? [String: Any],
+              let accessGroup = result[kSecAttrAccessGroup as String] as? String,
+              let component = accessGroup.split(separator: ".").first,
+              !component.isEmpty else { return nil }
+        return String(component)
+    }
+
+    static func sharedDefaults() throws -> UserDefaults {
+        let team = signingTeamID()
+        let suffixed = team.map { id in groupBases.map { $0 + "." + id } } ?? []
+        let names = suffixed + groupBases
+        let found: [(String, URL)] = names.compactMap { name in
             guard let url = FileManager.default
-                .containerURL(forSecurityApplicationGroupIdentifier: group) else {
+                .containerURL(forSecurityApplicationGroupIdentifier: name) else {
                 return nil
             }
-            return (group, url)
+            return (name, url)
         }
-        let preferred = available.first { entry in
-            FileManager.default.fileExists(atPath: entry.1.appendingPathComponent("Apps").path)
-        } ?? available.first
-        guard let selected = preferred else { return nil }
-        return UserDefaults(suiteName: selected.0)
+        let selected = found.first { entry in
+            FileManager.default.fileExists(
+                atPath: entry.1.appendingPathComponent("Apps").path)
+        } ?? found.first
+        guard let chosen = selected,
+              let defaults = UserDefaults(suiteName: chosen.0) else {
+            NSLog("[MediaBloom] Control Center cannot open an authorized shared App Group. Team: %@", team ?? "unknown")
+            throw MBControlError.groupUnavailable
+        }
+        return defaults
     }
 
-    // Five visual states for a small cup filling with water.
-    // Actual gain keeps 10% adjustments; icon snaps to the nearest quarter.
-    static func glassLevel(for bundle: String) -> Int {
-        guard let defaults = sharedDefaults() else { return 100 }
-        let saved = defaults.object(forKey: prefix + bundle) as? NSNumber
-        let raw = saved?.doubleValue ?? 1.0
-        let clamped = raw.isFinite ? min(1, max(0, raw)) : 1.0
-        return Int((clamped * 4).rounded()) * 25
-    }
-
-    @MainActor static func refreshVisualControls() {
-        // iOS re-renders each control with currentValue() from shared defaults.
-        // Reload all six so +, − and mute show the same updated water level.
-        ControlCenter.shared.reloadAllControls()
-    }
-
-    static func modify(_ bundle: String, by change: Double = 0, mute: Bool = false) {
-        guard let defaults = sharedDefaults() else {
-            NSLog("[MediaBloom Controls] No authorized shared App Group for Control Center")
-            return
-        }
-        let key = prefix + bundle
-        let savedKey = savedNonZeroPrefix + bundle
-        let old = defaults.object(forKey: key) as? NSNumber
-        let value = min(1.0, max(0.0, old?.doubleValue ?? 1.0))
-        let new: Double
-        if mute {
-            if value > 0.001 {
-                defaults.set(value, forKey: savedKey)
-                new = 0
-            } else {
-                let previous = defaults.object(forKey: savedKey) as? NSNumber
-                new = min(1, max(0.05, previous?.doubleValue ?? 0.5))
-            }
-        } else {
-            new = min(1, max(0, (value * 10 + change * 10).rounded() / 10))
-        }
-        defaults.set(new, forKey: key)
+    static func currentLevel(defaults: UserDefaults) -> Int {
         defaults.synchronize()
-        NSLog("[MediaBloom Controls] %@ volume set to %.2f", bundle, new)
+        let current = defaults.object(forKey: masterKey)
+            ?? defaults.object(forKey: "MediaBloomAudioGainV1." + guestIDs[0])
+            ?? defaults.object(forKey: "MediaBloomAudioGainV1." + guestIDs[1])
+        let raw = (current as? NSNumber)?.doubleValue ?? 1.0
+        let safe = raw.isFinite ? max(0, min(1, raw)) : 1.0
+        return Int((safe * 4.0).rounded()) * 25
+    }
+
+    static func level() -> Int {
+        guard let shared = try? sharedDefaults() else { return 100 }
+        return currentLevel(defaults: shared)
+    }
+
+    static func cycle() throws -> Int {
+        let defaults = try sharedDefaults()
+        let current = currentLevel(defaults: defaults)
+        // Start by reducing an initially full level. After muting, return
+        // to 100%. One control, no additional gallery clutter.
+        let next = current == 0 ? 100 : max(0, current - 25)
+        let slider = Double(next) / 100.0
+        // Write the EXACT same preferences already used by BloomAudio v0.3.
+        defaults.set(slider, forKey: masterKey)
+        for guest in guestIDs {
+            defaults.set(slider, forKey: "MediaBloomAudioGainV1." + guest)
+        }
+        defaults.synchronize()
+        NSLog("[MediaBloom] General volume %d%% → %d%%", current, next)
+        return next
+    }
+
+    static func icon(for level: Int) -> String {
+        // SF Symbols are valid in native Control Center controls. Raster
+        // images caused the question mark placeholder on the actual iPhone.
+        switch level {
+        case 0: return "speaker.slash.fill"
+        case 25: return "speaker.fill"
+        case 50: return "speaker.wave.1.fill"
+        case 75: return "speaker.wave.2.fill"
+        default: return "speaker.wave.3.fill"
+        }
     }
 }
 
-// The current volume is read whenever iOS renders or refreshes a control.
-// No polling, persistent background task, hardware-button interception, or
-// changes to the system volume are needed.
 @available(iOSApplicationExtension 18.0, *)
-private struct MBGlassLevelProvider: ControlValueProvider {
-    let bundle: String
+private enum MBControlError: Error, LocalizedError {
+    case groupUnavailable
+    var errorDescription: String? {
+        "MediaBloom no puede acceder a los datos compartidos de SideStore. Revisa que la extensión esté firmada con los mismos App Groups."
+    }
+}
 
-    var previewValue: Int { 50 }
-
+@available(iOSApplicationExtension 18.0, *)
+private struct MBVolumeProvider: ControlValueProvider {
+    let previewValue: Int = 75
     func currentValue() async throws -> Int {
-        MBControlAudio.glassLevel(for: bundle)
+        MBMasterVolume.level()
     }
 }
 
-// Control Center executes these App Intents even when MediaBloom's interface
-// is not open. Whether the audio changes immediately depends on the guest
-// player still running; suspended players apply the saved gain on resumption.
 @available(iOSApplicationExtension 18.0, *)
-struct MBMusicLouderIntent: AppIntent {
-    static let title: LocalizedStringResource = "MediaBloom: Música +"
+struct MBGeneralVolumeIntent: AppIntent {
+    static let title: LocalizedStringResource = "MediaBloom: Volumen general"
+    static let description = IntentDescription("Cambia el volumen de Música y Video sin modificar el volumen del iPhone.")
+    static let openAppWhenRun: Bool = false
+
     func perform() async throws -> some IntentResult {
-        MBControlAudio.modify(MBControlAudio.music, by: MBControlAudio.gainStep)
-        await MBControlAudio.refreshVisualControls()
-        return .result()
-    }
-}
-@available(iOSApplicationExtension 18.0, *)
-struct MBMusicQuieterIntent: AppIntent {
-    static let title: LocalizedStringResource = "MediaBloom: Música −"
-    func perform() async throws -> some IntentResult {
-        MBControlAudio.modify(MBControlAudio.music, by: -MBControlAudio.gainStep)
-        await MBControlAudio.refreshVisualControls()
-        return .result()
-    }
-}
-@available(iOSApplicationExtension 18.0, *)
-struct MBMusicMuteIntent: AppIntent {
-    static let title: LocalizedStringResource = "MediaBloom: Silenciar música"
-    func perform() async throws -> some IntentResult {
-        MBControlAudio.modify(MBControlAudio.music, mute: true)
-        await MBControlAudio.refreshVisualControls()
-        return .result()
-    }
-}
-@available(iOSApplicationExtension 18.0, *)
-struct MBVideoLouderIntent: AppIntent {
-    static let title: LocalizedStringResource = "MediaBloom: Video +"
-    func perform() async throws -> some IntentResult {
-        MBControlAudio.modify(MBControlAudio.video, by: MBControlAudio.gainStep)
-        await MBControlAudio.refreshVisualControls()
-        return .result()
-    }
-}
-@available(iOSApplicationExtension 18.0, *)
-struct MBVideoQuieterIntent: AppIntent {
-    static let title: LocalizedStringResource = "MediaBloom: Video −"
-    func perform() async throws -> some IntentResult {
-        MBControlAudio.modify(MBControlAudio.video, by: -MBControlAudio.gainStep)
-        await MBControlAudio.refreshVisualControls()
-        return .result()
-    }
-}
-@available(iOSApplicationExtension 18.0, *)
-struct MBVideoMuteIntent: AppIntent {
-    static let title: LocalizedStringResource = "MediaBloom: Silenciar video"
-    func perform() async throws -> some IntentResult {
-        MBControlAudio.modify(MBControlAudio.video, mute: true)
-        await MBControlAudio.refreshVisualControls()
+        _ = try MBMasterVolume.cycle()
+        await MainActor.run {
+            ControlCenter.shared.reloadControls(ofKind: MBMasterVolume.kind)
+        }
         return .result()
     }
 }
 
 @available(iOSApplicationExtension 18.0, *)
-struct MBMusicLouderControl: ControlWidget {
+struct MBGeneralVolumeControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(
-            kind: "com.kdt.bloomboxmedia.music.up",
-            provider: MBGlassLevelProvider(bundle: MBControlAudio.music)
-        ) { level in
-            ControlWidgetButton(action: MBMusicLouderIntent()) {
-                Label("Música + \(level)%", image: "MediaBloomGlass\(level)Plus")
+            kind: MBMasterVolume.kind,
+            provider: MBVolumeProvider()
+        ) { value in
+            ControlWidgetButton(action: MBGeneralVolumeIntent()) {
+                Label("MediaBloom \(value)%", systemImage: MBMasterVolume.icon(for: value))
             }
         }
-        .displayName("MediaBloom · Música +")
-        .description("Sube 10% el volumen de YouTube Music, sin cambiar el iPhone.")
-    }
-}
-@available(iOSApplicationExtension 18.0, *)
-struct MBMusicQuieterControl: ControlWidget {
-    var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(
-            kind: "com.kdt.bloomboxmedia.music.down",
-            provider: MBGlassLevelProvider(bundle: MBControlAudio.music)
-        ) { level in
-            ControlWidgetButton(action: MBMusicQuieterIntent()) {
-                Label("Música − \(level)%", image: "MediaBloomGlass\(level)Minus")
-            }
-        }
-        .displayName("MediaBloom · Música −")
-        .description("Baja 10% el volumen de YouTube Music, sin cambiar el iPhone.")
-    }
-}
-@available(iOSApplicationExtension 18.0, *)
-struct MBMusicMuteControl: ControlWidget {
-    var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(
-            kind: "com.kdt.bloomboxmedia.music.mute",
-            provider: MBGlassLevelProvider(bundle: MBControlAudio.music)
-        ) { level in
-            ControlWidgetButton(action: MBMusicMuteIntent()) {
-                Label("Silenciar música \(level)%", image: "MediaBloomGlass\(level)Mute")
-            }
-        }
-        .displayName("MediaBloom · Silenciar música")
-        .description("Silencia o restaura YouTube Music.")
-    }
-}
-@available(iOSApplicationExtension 18.0, *)
-struct MBVideoLouderControl: ControlWidget {
-    var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(
-            kind: "com.kdt.bloomboxmedia.video.up",
-            provider: MBGlassLevelProvider(bundle: MBControlAudio.video)
-        ) { level in
-            ControlWidgetButton(action: MBVideoLouderIntent()) {
-                Label("Video + \(level)%", image: "MediaBloomGlass\(level)Plus")
-            }
-        }
-        .displayName("MediaBloom · Video +")
-        .description("Sube 10% el volumen de YouTube.")
-    }
-}
-@available(iOSApplicationExtension 18.0, *)
-struct MBVideoQuieterControl: ControlWidget {
-    var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(
-            kind: "com.kdt.bloomboxmedia.video.down",
-            provider: MBGlassLevelProvider(bundle: MBControlAudio.video)
-        ) { level in
-            ControlWidgetButton(action: MBVideoQuieterIntent()) {
-                Label("Video − \(level)%", image: "MediaBloomGlass\(level)Minus")
-            }
-        }
-        .displayName("MediaBloom · Video −")
-        .description("Baja 10% el volumen de YouTube.")
-    }
-}
-@available(iOSApplicationExtension 18.0, *)
-struct MBVideoMuteControl: ControlWidget {
-    var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(
-            kind: "com.kdt.bloomboxmedia.video.mute",
-            provider: MBGlassLevelProvider(bundle: MBControlAudio.video)
-        ) { level in
-            ControlWidgetButton(action: MBVideoMuteIntent()) {
-                Label("Silenciar video \(level)%", image: "MediaBloomGlass\(level)Mute")
-            }
-        }
-        .displayName("MediaBloom · Silenciar video")
-        .description("Silencia o restaura YouTube.")
+        .displayName("MediaBloom · Volumen")
+        .description("Un solo control para Música y Video: 100, 75, 50, 25 y 0%.")
     }
 }
