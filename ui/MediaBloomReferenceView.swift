@@ -41,6 +41,7 @@ struct MediaBloomReferenceView: View {
     @AppStorage("MediaBloomMixCardHexV1") private var mixHex = "CBCDC9"
     @AppStorage("MediaBloomWallpaperEnabledV1") private var wallpaperEnabled = true
     @AppStorage("MediaBloomWallpaperBlurV1") private var wallpaperBlur = 14.0
+    @AppStorage("MediaBloomGlassOpacityV1") private var glassOpacity = 0.72
 
     private var theme: MBReferenceTheme {
         MBReferenceTheme(accent: MBColorHex.color(accentHex),
@@ -251,7 +252,7 @@ struct MediaBloomReferenceView: View {
         .padding(.top, 6)
         .padding(.bottom, 11)
         .frame(width: width, height: height)
-        .background(theme.white, in: RoundedRectangle(cornerRadius: width / 2, style: .continuous))
+        .background(MBGlassPanel(tint: theme.white, opacity: glassOpacity, cornerRadius: width / 2))
     }
 
     // MARK: - Search
@@ -285,77 +286,32 @@ struct MediaBloomReferenceView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: height)
-        .background(theme.white, in: Capsule())
+        .background(MBGlassPanel(tint: theme.white, opacity: glassOpacity, cornerRadius: height / 2))
     }
 
     // MARK: - Featured mix, original circles
+    // The current song now owns the WHOLE hero, in either orientation.
+    // Album artwork fills the available card; landscape artist controls float
+    // on an independent, legible glass surface rather than shrinking the song.
     private func featuredPanel(landscape: Bool) -> some View {
-        GeometryReader { size in
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: landscape ? 28 : 29, style: .continuous)
-                    .fill(theme.gray)
-                GeometryReader { g in
-                    if landscape {
-                        Circle().fill(theme.ink)
-                            .frame(width: g.size.height * 0.79, height: g.size.height * 0.79)
-                            .position(x: g.size.width * 0.62, y: g.size.height * 0.34)
-                        Circle().fill(theme.coral)
-                            .frame(width: g.size.height * 0.32, height: g.size.height * 0.32)
-                            .position(x: g.size.width * 0.71, y: g.size.height * 0.37)
-                        Circle().fill(theme.white)
-                            .frame(width: g.size.height * 1.13, height: g.size.height * 1.13)
-                            .position(x: g.size.width * 0.70, y: g.size.height * 1.10)
-                    } else {
-                        Circle().fill(theme.ink)
-                            .frame(width: g.size.width * 0.50, height: g.size.width * 0.50)
-                            .position(x: g.size.width * 0.69, y: g.size.height * 0.31)
-                        Circle().fill(theme.coral)
-                            .frame(width: g.size.width * 0.215, height: g.size.width * 0.215)
-                            .position(x: g.size.width * 0.83, y: g.size.height * 0.37)
-                        Circle().fill(theme.white)
-                            .frame(width: g.size.width * 0.99, height: g.size.width * 0.99)
-                            .position(x: g.size.width * 0.83, y: g.size.height * 0.90)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 29, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(t("Mix de tus favoritos", "Your favorites mix"))
-                        .font(.system(size: landscape ? 12 : 12, weight: .medium))
-                    Text(t("Basado en", "Based on") + "\n" + artistSummary)
-                        .font(.system(size: landscape ? 20 : 19, weight: .bold))
-                        .lineSpacing(0)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .foregroundColor(theme.ink)
-                .padding(.leading, landscape ? 17 : 16)
-                .padding(.top, landscape ? 16 : 16)
-
+        GeometryReader { geometry in
+            ZStack(alignment: .topTrailing) {
+                musicButton()
+                    .frame(width: geometry.size.width, height: geometry.size.height)
                 if landscape {
-                    HStack(alignment: .bottom, spacing: 10) {
-                        musicButton()
-                            .fixedSize(horizontal: true, vertical: false)
-                        Spacer(minLength: 0)
-                        artistContent(landscape: true)
-                            .frame(width: max(225, size.size.width * 0.54),
-                                   height: min(112, size.size.height * 0.45), alignment: .bottom)
-                    }
-                    .padding(.leading, 14)
-                    .padding(.trailing, 14)
-                    .padding(.bottom, 12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                } else {
-                    VStack {
-                        Spacer()
-                        HStack {
-                            musicButton()
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.bottom, 12)
-                        .padding(.leading, 12)
-                    }
+                    artistContent(landscape: true)
+                        .padding(10)
+                        .frame(width: min(245, geometry.size.width * 0.45),
+                               height: 105, alignment: .topLeading)
+                        .background(MBGlassPanel(tint: theme.white,
+                                                 opacity: glassOpacity,
+                                                 cornerRadius: 20))
+                        .padding(12)
                 }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipShape(RoundedRectangle(cornerRadius: landscape ? 28 : 29,
+                                        style: .continuous))
         }
     }
 
@@ -377,7 +333,7 @@ struct MediaBloomReferenceView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 13)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(theme.white, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .background(MBGlassPanel(tint: theme.white, opacity: glassOpacity, cornerRadius: 26))
     }
 
     private func artistContent(landscape: Bool) -> some View {
@@ -501,7 +457,7 @@ struct MediaBloomReferenceView: View {
         .padding(.horizontal, 10)
         .padding(.top, 13)
         .padding(.bottom, 10)
-        .background(theme.white, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .background(MBGlassPanel(tint: theme.white, opacity: glassOpacity, cornerRadius: 26))
     }
 
     private func appCell(_ app: MediaBloomHomeApp) -> some View {
@@ -597,8 +553,8 @@ struct MediaBloomReferenceView: View {
                         .padding(.horizontal, 11)
                         .frame(maxWidth: .infinity)
                         .frame(height: 69)
-                        .background(index == chosen.count - 1 ? theme.white : theme.gray,
-                                    in: RoundedRectangle(cornerRadius: 25, style: .continuous))
+                        .background(MBGlassPanel(tint: index == chosen.count - 1 ? theme.white : theme.gray,
+                                                 opacity: glassOpacity, cornerRadius: 25))
                             }
                             .buttonStyle(.plain)
                             .contextMenu { appVolumeContextMenu(app) }
@@ -625,7 +581,7 @@ struct MediaBloomReferenceView: View {
             .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.white, in: RoundedRectangle(cornerRadius: 27, style: .continuous))
+        .background(MBGlassPanel(tint: theme.white, opacity: glassOpacity, cornerRadius: 27))
     }
     // MARK: - Custom wallpaper and per-guest volume
     private var wallpaperBackground: some View {
