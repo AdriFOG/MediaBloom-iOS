@@ -24,15 +24,39 @@ struct MBMusicTrack: Identifiable, Codable, Hashable {
     }
 }
 
+// Reserve a distinct slot BEFORE suspension. An actor can receive another
+// search while an earlier call is sleeping; updating the timestamp afterward
+// allowed simultaneous queries and transient MusicBrainz 503/429 responses.
 private actor MBMusicBrainzLimiter {
     static let shared = MBMusicBrainzLimiter()
-    private var lastStarted = Date.distantPast
+    private var nextAllowed = Date.distantPast
     func waitForSlot() async {
-        let delay = max(0, 1.15 - Date().timeIntervalSince(lastStarted))
+        let now = Date()
+        let reserved = max(now, nextAllowed)
+        nextAllowed = reserved.addingTimeInterval(1.25)
+        let delay = max(0, reserved.timeIntervalSince(now))
         if delay > 0 {
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         }
-        lastStarted = Date()
+    }
+}
+
+private enum MBMusicServiceError: LocalizedError {
+    case http(Int)
+
+    var errorDescription: String? {
+        let english = Locale.current.languageCode == "en"
+        switch self {
+        case .http(403):
+            return english ? "Access denied by the music service (HTTP 403)." :
+                "El servicio rechazó la solicitud (HTTP 403)."
+        case .http(let code) where code == 429 || code == 503:
+            return english ? "Music service busy or rate-limited (HTTP \(code)). Please retry." :
+                "Servicio ocupado o limitado (HTTP \(code)). Intenta de nuevo."
+        case .http(let code):
+            return english ? "The music service returned HTTP \(code)." :
+                "El servidor musical respondió HTTP \(code)."
+        }
     }
 }
 
@@ -44,23 +68,69 @@ actor MBMusicCatalogAPI {
     private var artistSearchCache: [String: [MBMusicArtist]] = [:]
     private var recordingCache: [String: [MBMusicTrack]] = [:]
 
+    // Official MusicBrainz MBIDs. These are a SMALL offline fallback for the
+    // three onboarding examples, not a fake general artist catalog. They also
+    // let preexisting favorites resolve without a network search.
+    nonisolated static func verifiedMatches(_ search: String) -> [MBMusicArtist] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        guard query.count >= 2 else { return [] }
+        let examples: [MBMusicArtist] = [
+            MBMusicArtist(id: "89aa5ecb-59ad-46f5-b3eb-2d424e941f19", name: "Bad Bunny"),
+            MBMusicArtist(id: "c8b03190-306c-4120-bb0b-6f2ebfc06ea9", name: "The Weeknd"),
+            MBMusicArtist(id: "f4abc0b5-3f7a-4eff-8f78-ac078dbce533", name: "Billie Eilish")
+        ]
+        return examples.filter { artist in
+            let normalized = artist.name.lowercased()
+            return normalized.contains(query) ||
+                (normalized == "billie eilish" && query == "billy")
+        }
+    }
+
     private func fetchJSON(_ url: URL, musicBrainz: Bool = false) async throws -> Any {
         guard url.scheme == "https", let host = url.host?.lowercased(),
               ["musicbrainz.org", "api.listenbrainz.org"].contains(host) else {
             throw URLError(.badURL)
         }
-        if musicBrainz { await MBMusicBrainzLimiter.shared.waitForSlot() }
         var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 16)
         request.setValue(agent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        guard (200..<300).contains(response.statusCode) else {
-            throw URLError(response.statusCode == 429 || response.statusCode == 503
-                ? .dataNotAllowed : .badServerResponse)
+
+        // One slot for BOTH public APIs. Retry only temporary server/network
+        // errors and honor numeric Retry-After (bounded to protect the UI).
+        for attempt in 0..<3 {
+            await MBMusicBrainzLimiter.shared.waitForSlot()
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
+                }
+                let status = http.statusCode
+                if [429, 502, 503, 504].contains(status) && attempt < 2 {
+                    let suggested = http.value(forHTTPHeaderField: "Retry-After")
+                        .flatMap { Double($0) }
+                    let delay = min(8.0, max(1.5, suggested ?? Double((attempt + 1) * 2)))
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    continue
+                }
+                guard (200..<300).contains(status) else {
+                    throw MBMusicServiceError.http(status)
+                }
+                guard data.count <= 3_000_000 else {
+                    throw URLError(.dataLengthExceedsMaximum)
+                }
+                return try JSONSerialization.jsonObject(with: data)
+            } catch let error as URLError {
+                let transient: [URLError.Code] = [.timedOut, .networkConnectionLost,
+                                                  .cannotConnectToHost, .cannotFindHost]
+                if transient.contains(error.code) && attempt < 2 {
+                    try await Task.sleep(nanoseconds: UInt64((attempt + 1) * 2) * 1_000_000_000)
+                    continue
+                }
+                throw error
+            }
         }
-        guard data.count <= 3_000_000 else { throw URLError(.dataLengthExceedsMaximum) }
-        return try JSONSerialization.jsonObject(with: data)
+        throw URLError(.timedOut)
     }
 
     private func validArtist(_ id: String) -> Bool { UUID(uuidString: id) != nil }
@@ -72,7 +142,9 @@ actor MBMusicCatalogAPI {
         if let cached = artistSearchCache[key] { return cached }
         var url = URLComponents(string: "https://musicbrainz.org/ws/2/artist/")!
         let sanitized = query.replacingOccurrences(of: "\"", with: "")
-        url.queryItems = [URLQueryItem(name: "query", value: "artist:\"\(sanitized)\""),
+        // A regular indexed search supports partial names and aliases; the
+        // quoted exact-field query was too restrictive for onboarding.
+        url.queryItems = [URLQueryItem(name: "query", value: sanitized),
                           URLQueryItem(name: "fmt", value: "json"),
                           URLQueryItem(name: "limit", value: "12")]
         guard let address = url.url else { throw URLError(.badURL) }
@@ -100,6 +172,12 @@ actor MBMusicCatalogAPI {
         let key = name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
         let saved = UserDefaults.standard.dictionary(forKey: artistIDsKey) as? [String: String] ?? [:]
         if let id = saved[key], validArtist(id) { return MBMusicArtist(id: id, name: name) }
+        if let official = Self.verifiedMatches(name).first(where: {
+            $0.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == key
+        }) {
+            rememberArtist(official)
+            return official
+        }
         let found = try await searchArtists(name)
         // A similarly-named performer must NEVER become a recommendation.
         guard let exact = found.first(where: {
@@ -254,13 +332,29 @@ actor MBMusicCatalogAPI {
         let current = searchVersion
         searching = true
         searchError = nil
-        suggestions = []
+        // Immediately offer verified matches while the public API is loading.
+        // These are real MBIDs, not invented artist results.
+        suggestions = MBMusicCatalogAPI.verifiedMatches(name)
         Task {
             do {
                 let list = try await MBMusicCatalogAPI.shared.searchArtists(name)
-                if current == searchVersion { suggestions = list }
+                if current == searchVersion {
+                    let verified = MBMusicCatalogAPI.verifiedMatches(name)
+                    let verifiedIDs = Set(verified.map { $0.id })
+                    suggestions = verified + list.filter { !verifiedIDs.contains($0.id) }
+                }
             } catch {
-                if current == searchVersion { searchError = "No pudimos consultar MusicBrainz." }
+                if current == searchVersion {
+                    // Display real failures (HTTP status or iOS network error).
+                    // Only these three artists have preverified offline MBIDs.
+                    let verified = MBMusicCatalogAPI.verifiedMatches(name)
+                    suggestions = verified
+                    let english = Locale.current.languageCode == "en"
+                    let intro = "MusicBrainz: "
+                    let fallback = verified.isEmpty ? "" :
+                        (english ? " Showing verified artists." : " Mostrando artistas verificados.")
+                    searchError = intro + error.localizedDescription + fallback
+                }
             }
             if current == searchVersion { searching = false }
         }
@@ -439,7 +533,9 @@ struct MBMusicArtistPicker: View {
                         Text(error).font(.footnote).foregroundColor(.orange)
                     }
                     if !options.isEmpty {
-                        Text(t("Resultados de MusicBrainz", "MusicBrainz results"))
+                        Text(catalog.searchError == nil
+                             ? t("Resultados de MusicBrainz", "MusicBrainz results")
+                             : t("Artistas verificados sin conexión", "Verified artists while offline"))
                             .font(.caption.weight(.semibold))
                         ForEach(options) { artist in
                             Button {
