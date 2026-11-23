@@ -63,7 +63,7 @@ struct MediaBloomControlBundle: WidgetBundle {
 """)
 
     project = PBX.read_text()
-    anchor = "  INFOPLIST_FILE = ManzanaExpiryWidget/Info.plist;"
+    anchor = "INFOPLIST_FILE = ManzanaExpiryWidget/Info.plist;"
     assert project.count(anchor) == 2, "Expected two widget build configurations"
     project = project.replace(
         anchor,
