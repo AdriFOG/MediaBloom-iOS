@@ -20,12 +20,115 @@ final class MBHapticsDiagnostic: ObservableObject {
     @Published private(set) var testResult = ""
     @Published private(set) var nowPlayingSummary = ""
     @Published private(set) var playbackSummary = ""
+    // Capture survives dismissal of Settings. The saved log survives a force-quit.
+    @Published private(set) var captureActive = false
+    @Published private(set) var recordedEvents: [String] = []
+    @Published private(set) var lastSample = ""
+    @Published private(set) var sampleCount = 0
+    private let eventsKey = "MediaBloomHapticsSavedEventsV1"
+    private let sampleKey = "MediaBloomHapticsLastSampleV1"
+    private let sampleCountKey = "MediaBloomHapticsLastSampleCountV1"
+    private var captureTimer: Timer?
+    private var lastSongSignature = ""
+    private var lastCatalogCheck = ""
     private var statusObserverToken: (any NSCopying)?
     private var engine: CHHapticEngine?
     private var inspectedISRC: String?
 
     init() {
         hardwareAvailable = CHHapticEngine.capabilitiesForHardware().supportsHaptics
+        recordedEvents = UserDefaults.standard.stringArray(forKey: eventsKey) ?? []
+        lastSample = UserDefaults.standard.string(forKey: sampleKey) ?? ""
+        sampleCount = UserDefaults.standard.integer(forKey: sampleCountKey)
+    }
+
+    private func saveEvent(_ message: String) {
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        recordedEvents.append("\(stamp) · \(message)")
+        if recordedEvents.count > 32 {
+            recordedEvents.removeFirst(recordedEvents.count - 32)
+        }
+        UserDefaults.standard.set(recordedEvents, forKey: eventsKey)
+        // The user must force-quit the LiveContainer host to return to its launcher.
+        // Flush each meaningful event rather than assuming normal app termination.
+        UserDefaults.standard.synchronize()
+    }
+
+    func startCapture(english: Bool) {
+        beginObservation(english: english)
+        guard !captureActive else { return }
+        captureActive = true
+        sampleCount = 0
+        lastSongSignature = ""
+        lastCatalogCheck = ""
+        saveEvent(english ? "Capture started before guest playback." :
+                  "Registro iniciado antes de abrir el reproductor.")
+        captureNowPlaying(english: english)
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.captureNowPlaying(english: english)
+            }
+        }
+        captureTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func stopCapture(english: Bool) {
+        guard captureActive else { return }
+        captureActive = false
+        captureTimer?.invalidate()
+        captureTimer = nil
+        saveEvent(english ? "Capture stopped manually." : "Registro detenido manualmente.")
+    }
+
+    func clearCapture() {
+        recordedEvents = []
+        lastSample = ""
+        sampleCount = 0
+        UserDefaults.standard.removeObject(forKey: eventsKey)
+        UserDefaults.standard.removeObject(forKey: sampleKey)
+        UserDefaults.standard.removeObject(forKey: sampleCountKey)
+        UserDefaults.standard.synchronize()
+    }
+
+    private func captureNowPlaying(english: Bool) {
+        guard captureActive else { return }
+        // Observe only local Now Playing metadata. Guest metadata may not be
+        // accessible; an empty result is not proof no song is playing.
+        let info = MPNowPlayingInfoCenter.default().nowPlayingInfo
+        let title = (info?[MPMediaItemPropertyTitle] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = (info?[MPMediaItemPropertyArtist] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let isrc = (info?[MPNowPlayingInfoPropertyInternationalStandardRecordingCode] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        sampleCount += 1
+        // Save a heartbeat too: even if no title arrives, a capture session that
+        // kept running in the guest can be distinguished from a stalled session.
+        if sampleCount == 1 || sampleCount % 5 == 0 {
+            lastSample = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
+            UserDefaults.standard.set(lastSample, forKey: sampleKey)
+            UserDefaults.standard.set(sampleCount, forKey: sampleCountKey)
+            UserDefaults.standard.synchronize()
+        }
+        let signature = "\(title)|\(artist)|\(isrc)"
+        if signature != lastSongSignature {
+            lastSongSignature = signature
+            if !title.isEmpty || !isrc.isEmpty {
+                let song = title.isEmpty ? "(no title)" : title
+                let name = artist.isEmpty ? song : "\(song) — \(artist)"
+                saveEvent("Now Playing: \(name) | ISRC: \(isrc.isEmpty ? "missing" : isrc)")
+            }
+        }
+        guard !isrc.isEmpty, isrc != lastCatalogCheck, #available(iOS 18.0, *) else { return }
+        lastCatalogCheck = isrc
+        MAMusicHapticsManager.shared.checkHapticTrackAvailabilityForMedia(matchingCode: isrc) { [weak self] available in
+            Task { @MainActor [weak self] in
+                guard let self, self.captureActive, self.lastCatalogCheck == isrc else { return }
+                self.saveEvent(available ? "Apple haptic track available for \(isrc)" :
+                                          "Apple haptic track unavailable for \(isrc)")
+            }
+        }
     }
 
     // Apple reports actual haptic track playback here, not just support/setting.
@@ -36,10 +139,16 @@ final class MBHapticsDiagnostic: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     if playing {
+                        if self.captureActive {
+                            self.saveEvent("Apple Music Haptics ACTIVE for ISRC \(code)")
+                        }
                         self.playbackSummary = english
                             ? "iOS CONFIRMED synchronized Music Haptics for ISRC: \(code)"
                             : "iOS CONFIRMÓ vibraciones sincronizadas para ISRC: \(code)"
                     } else {
+                        if self.captureActive {
+                            self.saveEvent("Apple Music Haptics stopped (ISRC \(code))")
+                        }
                         self.playbackSummary = english
                             ? "iOS reported that the haptic track stopped."
                             : "iOS informó que la pista háptica se detuvo."
