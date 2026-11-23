@@ -104,6 +104,10 @@ private enum MBMasterVolume {
         for guest in guestIDs {
             defaults.set(slider, forKey: "MediaBloomAudioGainV1." + guest)
         }
+        // Diagnostic for physical tests: the host displays this tap counter.
+        // If it never increases, the App Intent could not access the App Group.
+        defaults.set(defaults.integer(forKey: "MediaBloomControlTapCountV1") + 1,
+                     forKey: "MediaBloomControlTapCountV1")
         defaults.synchronize()
         NSLog("[MediaBloom] General volume %d%% → %d%%", current, next)
         return next
