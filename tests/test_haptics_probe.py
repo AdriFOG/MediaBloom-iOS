@@ -10,6 +10,14 @@ assert info.get("BloomBoxMediaEdition") is True
 assert info.get("MusicHapticsSupported") is True
 assert "import CoreHaptics" in ui and "import MediaAccessibility" in ui
 assert "MAMusicHapticsManager.shared" in ui
+assert "addStatusObserver" in ui
+assert "playbackSummary" in ui
+assert "MPMediaItemPropertyTitle" in ui
+assert "MPMediaItemPropertyArtist" in ui
+assert "MBHapticsDiagnostic.shared" in appearance
+assert "haptics.beginObservation(english:" in appearance
+assert "haptics.nowPlayingSummary" in appearance
+assert "haptics.playbackSummary" in appearance
 assert "MPNowPlayingInfoPropertyInternationalStandardRecordingCode" in ui
 assert "checkHapticTrackAvailabilityForMedia(matchingCode:" in ui
 assert "CHHapticEngine.capabilitiesForHardware().supportsHaptics" in ui
