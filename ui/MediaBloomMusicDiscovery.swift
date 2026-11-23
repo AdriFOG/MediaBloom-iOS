@@ -20,7 +20,7 @@ struct MBMusicTrack: Identifiable, Codable, Hashable {
 
     var coverURL: URL? {
         guard let id = coverReleaseID, UUID(uuidString: id) != nil else { return nil }
-        return URL(string: "https://coverartarchive.org/release/\(id)/front-250")
+        return URL(string: "https://coverartarchive.org/release/\(id)/front-500")
     }
 }
 
