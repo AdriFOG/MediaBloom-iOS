@@ -32,7 +32,7 @@ assert "new = min(1, max(0" in controls
 assert "mute: true" in controls
 assert "get-task-allow" not in entitlements
 assert entitlements["com.apple.security.application-groups"] == [
-    "$(APP_GROUP_SIDESTORE)", "$(APP_GROUP_ALTSTORE)"
+    "group.com.SideStore.SideStore", "group.com.rileytestut.AltStore"
 ]
 assert info["NSExtension"]["NSExtensionPointIdentifier"] == "com.apple.widgetkit-extension"
 assert info["CFBundleDisplayName"] == "MediaBloom Controles"
