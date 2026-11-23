@@ -13,7 +13,7 @@ import WidgetKit
 
 @available(iOSApplicationExtension 18.0, *)
 private enum MBMasterVolume {
-    static let kind = "com.kdt.bloomboxmedia.master.volume"
+    static let kind = "com.kdt.bloomboxmedia.master.volume.v2"
     static let masterKey = "MediaBloomMasterGainV1"
     static let guestIDs = [
         "com.google.ios.youtubemusic",
