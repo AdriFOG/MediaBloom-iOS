@@ -1,3 +1,5 @@
+#include <objc/message.h>
+
 // BloomAudio in-guest control. Only compiled in the independent MediaBloom IPA.
 // A small, moveable speaker bubble remains available while a supported guest
 // is open. It never becomes the key window and never sets iOS device volume.
