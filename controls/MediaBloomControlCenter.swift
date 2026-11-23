@@ -4,7 +4,6 @@
 // user-added controls change per-guest BloomAudio gain in the shared App Group.
 import AppIntents
 import Foundation
-import Security
 import SwiftUI
 import WidgetKit
 
@@ -16,16 +15,15 @@ private enum MBControlAudio {
     static let savedNonZeroPrefix = "MediaBloomControlLastNonZeroV1."
     static let gainStep: Double = 0.10
 
-    // Only access App Groups that are ACTUALLY authorized by the widget's
-    // signed entitlements. Signer/team IDs vary for SideStore/AltStore; never
-    // write to unrelated ordinary UserDefaults and pretend it is shared.
+    // iOS widget extensions have no Swift SecTask API for reading entitlements.
+    // Probe only the two App Groups declared in THIS widget's entitlements;
+    // containerURL returns nil unless the extension is authorized to use them.
+    // Never pretend a regular UserDefaults store is a cross-app suite.
     static func sharedDefaults() -> UserDefaults? {
-        guard let task = SecTaskCreateFromSelf(nil),
-              let allowed = SecTaskCopyValueForEntitlement(
-                task, "com.apple.security.application-groups" as CFString, nil
-              ) as? [String] else {
-            return nil
-        }
+        let allowed = [
+            "group.com.SideStore.SideStore",
+            "group.com.rileytestut.AltStore"
+        ]
         let available = allowed.compactMap { group -> (String, URL)? in
             guard let url = FileManager.default
                 .containerURL(forSecurityApplicationGroupIdentifier: group) else {
