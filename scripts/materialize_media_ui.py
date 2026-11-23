@@ -13,7 +13,7 @@ import zlib
 
 ROOT = Path("../media-tools").resolve()
 ASSET = ROOT / "assets/claude_ui_source.zlib.b64"
-EXPECTED = "aa6374667f591a5245d1811cf789fd266122d85ff65166633856818958529751"
+EXPECTED = "d042e3f38f61c6c6f466a064c862ea413db658108f6e6a03ecf0ea4a72b40f0f"
 FILES = {
     "ui/MediaBloomHomeView.swift",
     "ui/MediaBloomHomeBridge.swift",
@@ -33,17 +33,8 @@ def main():
         dest = (ROOT / name).resolve()
         if not dest.is_relative_to(ROOT) or dest.exists() or not isinstance(source, str):
             raise RuntimeError(f"Unsafe or duplicate UI source: {name}")
-        # The original design used .scrollIndicators(.hidden), an iOS 16
-        # API. The pinned launcher also builds for older iOS versions.
-        # Apply the compatible ScrollView initializer after SHA verification.
-        if name == "ui/MediaBloomHomeView.swift":
-            old = "ScrollView {"
-            marker = "        .scrollIndicators(.hidden)"
-            if source.count(old) != 1 or source.count(marker) != 1:
-                raise RuntimeError("Unexpected UI scroll source; review before patching")
-            source = source.replace(
-                old, "ScrollView(.vertical, showsIndicators: false) {", 1
-            ).replace(marker, "", 1)
+        if name == "ui/MediaBloomHomeView.swift" and ".scrollIndicators(.hidden)" in source:
+            raise RuntimeError("iOS 15 compatibility regression in submitted UI")
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(source, encoding="utf-8")
     print("PASS: materialized 4 reviewed MediaBloom UI sources (SHA256 verified)")
