@@ -190,12 +190,12 @@ jobs:
 
 
   publish-stable:
-    name: Publish MediaBloom v1.0.0
+    name: Publish MediaBloom v2.0.0
     # Only the explicit tested release merge commit on main may publish.
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      startsWith(github.event.head_commit.message, 'release: MediaBloom v1.0.0')
+      startsWith(github.event.head_commit.message, 'release: MediaBloom v2.0.0')
     needs: build-media
     runs-on: ubuntu-latest
     permissions:
@@ -215,11 +215,11 @@ jobs:
           (cd release && sha256sum MediaBloom-SideStore-unsigned.ipa > SHA256SUMS.txt)
           cat release/SHA256SUMS.txt
 
-      - name: Publish MediaBloom v1.0.0
+      - name: Publish MediaBloom v2.0.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: "MediaBloom v1.0.0 — BloomAudio"
+          tag_name: v2.0.0
+          name: "MediaBloom 2.0 — Música y personalización"
           target_commitish: ${{ github.sha }}
           prerelease: false
           draft: false
@@ -227,16 +227,23 @@ jobs:
             release/MediaBloom-SideStore-unsigned.ipa
             release/SHA256SUMS.txt
           body: |
-            ## Primera versión estable — MediaBloom v1.0.0 💜
-            Aplicación iOS multimedia independiente de BloomBox, basada en una segunda instancia de LiveContainer.
+            ## MediaBloom 2.0 — Música y personalización 💜
 
-            - Reutiliza YouTube y YouTube Music compartidos con BloomBox sin reinstalarlos.
-            - BloomAudio: volumen independiente por app con control flotante movible durante la reproducción.
-            - Escala perceptual de volumen, silencio al 0% y control que guarda el nivel por app.
-            - Interfaz multimedia para video y música; sin funciones de GameBox.
-            - El volumen global de iOS no cambia.
-            - El motor de audio sigue siendo experimental y se activa opcionalmente. Algunas futuras versiones de las apps pueden requerir ajustes.
+            Una nueva interfaz multimedia, un catálogo musical basado en tus artistas favoritos y un diseño totalmente personalizable para iPhone.
 
-            IMPORTANTE: instala únicamente esta IPA de MediaBloom-iOS y fírmala con SideStore o un método compatible. Tiene identificador propio (com.kdt.BloomBoxMedia): no desinstales ni reemplaces tu BloomBox principal. Para compartir biblioteca, ambas apps deben usar el mismo App Group autorizado.
+            ### Novedades
+            - Inicio musical con selección de artistas favoritos y recomendaciones de canciones reales.
+            - Catálogo con MusicBrainz, ListenBrainz y Cover Art Archive: portadas de álbumes y canciones de artistas grandes o pequeños, también bandas en español.
+            - Portadas completas en el recuadro de recomendaciones y apertura de canciones en el reproductor compatible instalado.
+            - Recomendaciones mezcladas al iniciar, evitando repetir la misma primera canción cuando hay varias disponibles.
+            - Caché de recomendaciones y portadas para abrir más rápido y reducir solicitudes; portadas guardadas con límite de almacenamiento.
+            - Fondos de pantalla propios, ajuste de desenfoque, colores personalizados y paneles de cristal con color elegible y transparencia de 0 a 100 %.
+            - Etiquetas de Música, Video, Ocultar o Automático compartidas con BloomBox, con actualización de la lista de apps.
+            - BloomAudio: volumen general de MediaBloom y volumen independiente por app multimedia.
 
-            Etiquetas personalizadas en BloomBox / MediaBloom se desarrollarán en una actualización posterior.
+            ### Compatibilidad y próximas mejoras
+            - Spotify como reproductor **aún no está integrado completamente**. Su compatibilidad ampliada queda para la próxima actualización.
+            - Esta es una IPA independiente, sin firmar, para firmar e instalar con SideStore o una alternativa compatible.
+            - MediaBloom conserva identificador propio (com.kdt.BloomBoxMedia) y no reemplaza BloomBox.
+            - Para compartir aplicaciones entre ambos, deben usar el mismo App Group autorizado.
+            - Algunas portadas o canciones podrían faltar si los catálogos públicos no las contienen. BloomAudio continúa siendo opcional y experimental.
