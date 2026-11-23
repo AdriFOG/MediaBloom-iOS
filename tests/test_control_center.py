@@ -68,7 +68,8 @@ assert 'groupBases.map { $0 + "." + id }' in controls
 assert "containerURL(forSecurityApplicationGroupIdentifier:" in controls
 assert "appendingPathComponent(\"Apps\")" in controls
 assert 'object(forKey: "MediaBloomAudioProbeEnabledV1") != nil' in controls
-assert "?? found.first" not in controls
+assert "?? found.first { entry in" in controls
+assert "?? found.first\n" not in controls
 assert "throw MBControlError.groupUnavailable" in controls
 assert "SecTaskCreateFromSelf" not in controls
 assert "SecTaskCopyValueForEntitlement" not in controls
