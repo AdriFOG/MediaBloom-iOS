@@ -81,7 +81,7 @@ struct MediaBloomControlBundle: WidgetBundle {
     # yet *no* MediaBloom controls appear in iOS Control Center.
     widget_embed = "E1292AF32DCA3A660065E12D /* LiveProcess.appex in Embed Foundation Extensions */,"
     assert project.count(widget_embed) == 1
-    project = project.replace(widget_embed, widget_embed + "\\n                BDA10000000000000000000D /* ManzanaExpiryWidget.appex in Embed Foundation Extensions */,")
+    project = project.replace(widget_embed, widget_embed + "\n                BDA10000000000000000000D /* ManzanaExpiryWidget.appex in Embed Foundation Extensions */,")
     PBX.write_text(project)
 
     # Discoverable instructions in MediaBloom itself. These buttons belong to
