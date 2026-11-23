@@ -16,6 +16,7 @@ private enum MBReferenceStyle {
 
 struct MediaBloomReferenceView: View {
     @ObservedObject var model: MediaBloomHomeModel
+    var allSharedGuests: [LCAppModel] = []
     @AppStorage("BloomBoxPreferredLanguage", store: LCUtils.appGroupUserDefault)
     private var preferredLanguage = "system"
     @State private var showArtistEditor = false
@@ -26,6 +27,7 @@ struct MediaBloomReferenceView: View {
     @AppStorage("MediaBloomPreferredMusicAppIDV1") private var preferredPlayerID = ""
     @State private var appPage = 0
     @State private var showAppearance = false
+    @State private var showMediaLabels = false
     @State private var individualApp: MediaBloomHomeApp?
     @State private var wallpaperImage: UIImage?
     @State private var previousMasterVolume = 0.85
@@ -41,13 +43,20 @@ struct MediaBloomReferenceView: View {
     @AppStorage("MediaBloomMixCardHexV1") private var mixHex = "CBCDC9"
     @AppStorage("MediaBloomWallpaperEnabledV1") private var wallpaperEnabled = true
     @AppStorage("MediaBloomWallpaperBlurV1") private var wallpaperBlur = 14.0
-    @AppStorage("MediaBloomGlassOpacityV1") private var glassOpacity = 0.72
+    @AppStorage("MediaBloomGlassOpacityV1") private var glassOpacity = 0.35
+    @AppStorage("MediaBloomGlassTintHexV1") private var glassTintHex = "F5F4F1"
 
     private var theme: MBReferenceTheme {
         MBReferenceTheme(accent: MBColorHex.color(accentHex),
                          background: MBColorHex.color(backgroundHex),
                          white: MBColorHex.color(cardHex),
                          gray: MBColorHex.color(mixHex))
+    }
+
+    private var glassColor: Color { MBColorHex.color(glassTintHex) }
+    private var panelInk: Color {
+        (glassOpacity < 0.26 || (MBColorHex.dark(glassTintHex) && glassOpacity > 0.48))
+            ? Color.white : theme.ink
     }
 
     private var english: Bool {
@@ -92,16 +101,33 @@ struct MediaBloomReferenceView: View {
                                 onFinish: { onboardingComplete = true; showOnboarding = false })
         }
         .sheet(isPresented: $showAppearance) {
-            MediaBloomAppearanceSheet(onOpenAdvanced: {
-                showAppearance = false
-                // Avoid opening a second sheet while the first animates.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    model.onOpenSettings()
-                }
-            })
+            MediaBloomAppearanceSheet(
+                onOpenAdvanced: {
+                    showAppearance = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        model.onOpenSettings()
+                    }
+                },
+                onManageMediaLabels: {
+                    showAppearance = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        showMediaLabels = true
+                    }
+                })
+        }
+        .sheet(isPresented: $showMediaLabels) {
+            MBMediaTagEditor(apps: allSharedGuests, english: english)
         }
         .sheet(item: $individualApp) { app in individualVolumeEditor(app) }
         .onAppear {
+            // Previous UI used the fixed 48–94% glass slider scale.
+            let defaults = UserDefaults.standard
+            if !defaults.bool(forKey: "MediaBloomGlassMigratedV2") {
+                if let legacy = defaults.object(forKey: "MediaBloomGlassOpacityV1") as? Double {
+                    glassOpacity = max(0, min(1, (legacy - 0.48) / 0.46 * 0.65))
+                }
+                defaults.set(true, forKey: "MediaBloomGlassMigratedV2")
+            }
             wallpaperImage = MBWallpaperStore.load()
             discovery.refresh(model.favoriteArtists)
             if !onboardingComplete {
@@ -237,12 +263,12 @@ struct MediaBloomReferenceView: View {
 
             Text("\(Int((level * 100).rounded()))%")
                 .font(.system(size: 14, weight: .bold))
-                .foregroundColor(theme.ink)
+                .foregroundColor(panelInk)
                 .minimumScaleFactor(0.8)
             if showName {
                 Text(audioEnabled ? "MediaBloom" : t("Activar audio", "Enable audio"))
                     .font(.system(size: 9, weight: .regular))
-                    .foregroundColor(theme.ink)
+                    .foregroundColor(panelInk)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                     .minimumScaleFactor(0.7)
@@ -252,7 +278,7 @@ struct MediaBloomReferenceView: View {
         .padding(.top, 6)
         .padding(.bottom, 11)
         .frame(width: width, height: height)
-        .background(MBGlassPanel(tint: theme.white, opacity: glassOpacity, cornerRadius: width / 2))
+        .background(MBGlassPanel(tint: glassColor, opacity: glassOpacity, cornerRadius: width / 2))
     }
 
     // MARK: - Search
@@ -260,33 +286,33 @@ struct MediaBloomReferenceView: View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 17, weight: .medium))
-                .foregroundColor(theme.ink)
+                .foregroundColor(panelInk)
             TextField("", text: $model.searchText,
                       prompt: Text(t("Buscar música", "Search music"))
-                        .foregroundColor(theme.ink.opacity(0.38)))
+                        .foregroundColor(panelInk.opacity(0.68)))
                 .font(.system(size: 14))
-                .foregroundColor(theme.ink)
+                .foregroundColor(panelInk)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
                 .onSubmit { model.onSearch(model.searchText) }
             if !model.searchText.isEmpty {
                 Button { model.searchText = "" } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(theme.ink.opacity(0.5))
+                        .foregroundColor(panelInk.opacity(0.75))
                 }
                 .buttonStyle(.plain)
             }
             Button { showAppearance = true } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(theme.ink.opacity(0.65))
+                    .foregroundColor(panelInk.opacity(0.75))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(t("Personalizar MediaBloom", "Customize MediaBloom"))
         }
         .padding(.horizontal, 16)
         .frame(height: height)
-        .background(MBGlassPanel(tint: theme.white, opacity: glassOpacity, cornerRadius: height / 2))
+        .background(MBGlassPanel(tint: glassColor, opacity: glassOpacity, cornerRadius: height / 2))
     }
 
     // MARK: - Featured mix, original circles
@@ -303,7 +329,7 @@ struct MediaBloomReferenceView: View {
                         .padding(10)
                         .frame(width: min(245, geometry.size.width * 0.45),
                                height: 105, alignment: .topLeading)
-                        .background(MBGlassPanel(tint: theme.white,
+                        .background(MBGlassPanel(tint: glassColor,
                                                  opacity: glassOpacity,
                                                  cornerRadius: 20))
                         .padding(12)
@@ -333,7 +359,7 @@ struct MediaBloomReferenceView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 13)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(MBGlassPanel(tint: theme.white, opacity: glassOpacity, cornerRadius: 26))
+            .background(MBGlassPanel(tint: glassColor, opacity: glassOpacity, cornerRadius: 26))
     }
 
     private func artistContent(landscape: Bool) -> some View {
@@ -376,7 +402,7 @@ struct MediaBloomReferenceView: View {
                 Capsule().fill(theme.track).frame(width: 22, height: 2)
             }
         }
-        .foregroundColor(theme.ink)
+        .foregroundColor(panelInk)
     }
 
     private func artistChip(_ artist: String) -> some View {
@@ -384,7 +410,7 @@ struct MediaBloomReferenceView: View {
         return Button { model.toggleArtist(artist) } label: {
             Text(artist)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(active ? theme.white : theme.ink)
+                .foregroundColor(active ? theme.white : panelInk)
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
                 .frame(maxWidth: .infinity)
@@ -453,11 +479,11 @@ struct MediaBloomReferenceView: View {
                 .padding(.bottom, 1)
             }
         }
-        .foregroundColor(theme.ink)
+        .foregroundColor(panelInk)
         .padding(.horizontal, 10)
         .padding(.top, 13)
         .padding(.bottom, 10)
-        .background(MBGlassPanel(tint: theme.white, opacity: glassOpacity, cornerRadius: 26))
+        .background(MBGlassPanel(tint: glassColor, opacity: glassOpacity, cornerRadius: 26))
     }
 
     private func appCell(_ app: MediaBloomHomeApp) -> some View {
@@ -482,7 +508,7 @@ struct MediaBloomReferenceView: View {
             Button { individualApp = app } label: {
                 Text(volumeText(for: app))
                     .font(.system(size: 10))
-                    .foregroundColor(theme.ink)
+                    .foregroundColor(panelInk)
                     .padding(.horizontal, 7)
                     .frame(height: 17)
                     .background(theme.pill, in: Capsule())
@@ -549,11 +575,11 @@ struct MediaBloomReferenceView: View {
                                 .font(.system(size: 11))
                                 .lineLimit(1)
                         }
-                        .foregroundColor(theme.ink)
+                        .foregroundColor(panelInk)
                         .padding(.horizontal, 11)
                         .frame(maxWidth: .infinity)
                         .frame(height: 69)
-                        .background(MBGlassPanel(tint: index == chosen.count - 1 ? theme.white : theme.gray,
+                        .background(MBGlassPanel(tint: glassColor,
                                                  opacity: glassOpacity, cornerRadius: 25))
                             }
                             .buttonStyle(.plain)
@@ -581,7 +607,7 @@ struct MediaBloomReferenceView: View {
             .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MBGlassPanel(tint: theme.white, opacity: glassOpacity, cornerRadius: 27))
+        .background(MBGlassPanel(tint: glassColor, opacity: glassOpacity, cornerRadius: 27))
     }
     // MARK: - Custom wallpaper and per-guest volume
     private var wallpaperBackground: some View {
