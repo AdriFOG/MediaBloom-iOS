@@ -57,7 +57,10 @@ private enum MBMasterVolume {
     static func sharedDefaults() throws -> UserDefaults {
         let team = signingTeamID()
         let suffixed = team.map { id in groupBases.map { $0 + "." + id } } ?? []
-        let names = suffixed + groupBases
+        // Some SideStore/LiveContainer resigner builds append the team
+        // suffix twice to nested extension groups. Probe only if authorized.
+        let twiceSuffixed = team.map { id in groupBases.map { $0 + "." + id + "." + id } } ?? []
+        let names = suffixed + twiceSuffixed + groupBases
         let found: [(String, URL)] = names.compactMap { name in
             guard let url = FileManager.default
                 .containerURL(forSecurityApplicationGroupIdentifier: name) else {
