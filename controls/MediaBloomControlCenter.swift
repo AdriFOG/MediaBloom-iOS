@@ -156,15 +156,6 @@ private enum MBControlError: Error, LocalizedError {
 }
 
 @available(iOSApplicationExtension 18.0, *)
-private struct MBVolumeProvider: ControlValueProvider {
-    let previewValue: Int = 75
-    func currentValue() async throws -> Int {
-        // A provider failure must not hide the control in Control Center.
-        MBMasterVolume.level()
-    }
-}
-
-@available(iOSApplicationExtension 18.0, *)
 struct MBGeneralVolumeIntent: AppIntent {
     static let title: LocalizedStringResource = "MediaBloom: Volumen general"
     static let description = IntentDescription("Cambia el volumen de Música y Video sin modificar el volumen del iPhone.")
@@ -181,11 +172,17 @@ struct MBGeneralVolumeIntent: AppIntent {
 @available(iOSApplicationExtension 18.0, *)
 struct MBGeneralVolumeControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(
-            kind: MBMasterVolume.kind,
-            provider: MBVolumeProvider()
-        ) { value in
+        // Avoid the asynchronous ControlValueProvider while WidgetKit
+        // discovers the extension. Some sideloaded installations exposed
+        // an empty/undiscoverable control when the provider touched
+        // App Group/Keychain before the control finished registering.
+        //
+        // The control remains dynamic: WidgetKit reconstructs its content
+        // after the action completes; the value comes from BloomAudio's
+        // existing shared gain. No extra control is registered.
+        StaticControlConfiguration(kind: MBMasterVolume.kind) {
             ControlWidgetButton(action: MBGeneralVolumeIntent()) {
+                let value = MBMasterVolume.level()
                 Label(value < 0 ? "MediaBloom · Sin acceso" : "MediaBloom \(value)%",
                       systemImage: MBMasterVolume.icon(for: value))
             }
