@@ -68,7 +68,7 @@ assert 'struct MBGlassPanel: View' in host
 assert '.fill(.ultraThinMaterial)' in host
 assert 'MediaBloomGlassOpacityV1' in host
 assert 'glassSection' in host
-assert 'MBGlassPanel(tint: theme.white, opacity: glassOpacity' in host
+assert 'MBGlassPanel(tint: glassColor, opacity: glassOpacity' in host
 # Preserve the existing guest link dispatch, favorite selection and volume.
 assert 'runApp(multitask: false, urlStr: link.absoluteString)' in host
 assert 'MediaBloomMasterGainV1' in host
