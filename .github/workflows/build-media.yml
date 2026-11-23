@@ -60,6 +60,12 @@ jobs:
       - name: Check shared media labels without breaking audio
         run: python3 ../media-tools/tests/test_shared_media_labels.py
 
+      - name: Install MediaBloom system Control Center actions
+        run: python3 ../media-tools/scripts/apply_control_center.py
+
+      - name: Verify Control Center buttons, App Group access and audio isolation
+        run: python3 ../media-tools/tests/test_control_center.py
+
       - name: Verify BloomAudio is off by default and restricted to MediaBloom
         run: |
           python3 - <<'PY'
