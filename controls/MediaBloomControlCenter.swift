@@ -90,9 +90,17 @@ private enum MBMasterVolume {
         return Int((safe * 4.0).rounded()) * 25
     }
 
-    static func level() throws -> Int {
-        // If signing prevents access, don't silently display 100% forever.
-        return currentLevel(defaults: try sharedDefaults())
+    // A ControlValueProvider must always produce a renderable value.
+    // Throwing while WidgetKit prepares the icon left empty circles on iOS.
+    // -1 means "App Group unavailable" rather than pretending volume is 100%.
+    // The App Intent still throws, so failures cannot be reported as success.
+    static func level() -> Int {
+        do {
+            return currentLevel(defaults: try sharedDefaults())
+        } catch {
+            NSLog("[MediaBloom] Control render: unable to read shared volume: %@", String(describing: error))
+            return -1
+        }
     }
 
     static func cycle() throws -> Int {
@@ -117,9 +125,10 @@ private enum MBMasterVolume {
     }
 
     static func icon(for level: Int) -> String {
-        // SF Symbols are valid in native Control Center controls. Raster
-        // images caused the question mark placeholder on the actual iPhone.
+        // SF Symbols stay visible even if the signed extension cannot open
+        // the shared group. Never return an empty image or unsupported asset.
         switch level {
+        case -1: return "exclamationmark.triangle.fill"
         case 0: return "speaker.slash.fill"
         case 25: return "speaker.fill"
         case 50: return "speaker.wave.1.fill"
@@ -141,7 +150,8 @@ private enum MBControlError: Error, LocalizedError {
 private struct MBVolumeProvider: ControlValueProvider {
     let previewValue: Int = 75
     func currentValue() async throws -> Int {
-        try MBMasterVolume.level()
+        // A provider failure must not hide the control in Control Center.
+        MBMasterVolume.level()
     }
 }
 
@@ -167,7 +177,8 @@ struct MBGeneralVolumeControl: ControlWidget {
             provider: MBVolumeProvider()
         ) { value in
             ControlWidgetButton(action: MBGeneralVolumeIntent()) {
-                Label("MediaBloom \(value)%", systemImage: MBMasterVolume.icon(for: value))
+                Label(value < 0 ? "MediaBloom · Sin acceso" : "MediaBloom \(value)%",
+                      systemImage: MBMasterVolume.icon(for: value))
             }
         }
         .displayName("MediaBloom · Volumen")
