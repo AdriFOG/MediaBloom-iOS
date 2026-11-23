@@ -22,7 +22,7 @@ struct MBReferenceTheme {
     }
 }
 
-// Native frosted glass with a light, adjustable overlay for readable dark text.
+// Native LIGHT frosted glass with a subtle color wash: wallpaper stays visible.
 // Uses only iOS 15-compatible materials and never changes the system wallpaper.
 struct MBGlassPanel: View {
     let tint: Color
@@ -31,10 +31,17 @@ struct MBGlassPanel: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        // The main interface prefers dark mode, so an unqualified material
+        // becomes dark charcoal. Force LIGHT material on the pane only;
+        // the surrounding MediaBloom theme remains unchanged.
+        let strength = max(0, min(1, (opacity - 0.48) / 0.46))
+        let colorWash = 0.035 + 0.24 * strength
         return shape
             .fill(.ultraThinMaterial)
-            .overlay(shape.fill(tint.opacity(max(0.48, min(0.96, opacity)))))
-            .overlay(shape.stroke(Color.white.opacity(0.36), lineWidth: 0.7))
+            .environment(\.colorScheme, .light)
+            .overlay(shape.fill(tint.opacity(colorWash)))
+            .overlay(shape.stroke(Color.white.opacity(0.48), lineWidth: 0.8))
+            .shadow(color: Color.black.opacity(0.08), radius: 8, y: 3)
     }
 }
 
