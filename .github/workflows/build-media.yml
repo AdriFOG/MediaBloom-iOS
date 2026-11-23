@@ -63,6 +63,9 @@ jobs:
       - name: Install MediaBloom system Control Center actions
         run: python3 ../media-tools/scripts/apply_control_center.py
 
+      - name: Render five glass fill levels for system volume controls
+        run: python3 ../media-tools/scripts/render_volume_glass.py
+
       - name: Verify Control Center buttons, App Group access and audio isolation
         run: python3 ../media-tools/tests/test_control_center.py
 
