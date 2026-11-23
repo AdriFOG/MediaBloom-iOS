@@ -93,8 +93,14 @@ jobs:
       - name: Validate tag compatibility, near-invisible glass, cached covers and shuffled recommendations
         run: python3 ../media-tools/tests/test_final_polish.py
 
+      - name: Enable Apple Music Haptics declaration and tactile diagnostics (MediaBloom only)
+        run: python3 ../media-tools/scripts/apply_haptics_probe.py
+
+      - name: Validate honest music-haptics readiness and noninvasive hardware test
+        run: python3 ../media-tools/tests/test_haptics_probe.py
+
       - name: Swift syntax check of responsive UI sources
-        run: xcrun swiftc -frontend -parse ../media-tools/ui/MediaBloomHomeView.swift ../media-tools/ui/MediaBloomHomeBridge.swift ../media-tools/ui/MediaBloomReferenceView.swift ../media-tools/ui/MediaBloomAppearance.swift ../media-tools/ui/MediaBloomMusicDiscovery.swift
+        run: xcrun swiftc -frontend -parse ../media-tools/ui/MediaBloomHomeView.swift ../media-tools/ui/MediaBloomHomeBridge.swift ../media-tools/ui/MediaBloomReferenceView.swift ../media-tools/ui/MediaBloomAppearance.swift ../media-tools/ui/MediaBloomMusicDiscovery.swift ../media-tools/ui/MediaBloomHaptics.swift
 
       - name: Install MediaBloom system Control Center actions
         run: python3 ../media-tools/scripts/apply_control_center.py
