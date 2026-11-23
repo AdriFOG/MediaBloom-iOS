@@ -21,7 +21,6 @@ final class MBHapticsDiagnostic: ObservableObject {
     @Published private(set) var nowPlayingSummary = ""
     @Published private(set) var playbackSummary = ""
     private var statusObserverToken: (any NSCopying)?
-    private var lastPlaybackConfirmed = false
     private var engine: CHHapticEngine?
     private var inspectedISRC: String?
 
@@ -36,7 +35,6 @@ final class MBHapticsDiagnostic: ObservableObject {
             statusObserverToken = MAMusicHapticsManager.shared.addStatusObserver { [weak self] code, playing in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.lastPlaybackConfirmed = playing
                     if playing {
                         self.playbackSummary = english
                             ? "iOS CONFIRMED synchronized Music Haptics for ISRC: \(code)"
@@ -77,8 +75,9 @@ final class MBHapticsDiagnostic: ObservableObject {
             if !title.isEmpty {
                 nowPlayingSummary = artist.isEmpty ? title : "\(title) — \(artist)"
             }
-            guard let code = (info?[MPNowPlayingInfoPropertyInternationalStandardRecordingCode] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines), !code.isEmpty else {
+            let rawCode = info?[MPNowPlayingInfoPropertyInternationalStandardRecordingCode] as? String ?? ""
+            let code = rawCode.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !code.isEmpty else {
                 metadataStatus = !title.isEmpty
                     ? (english
                        ? "The song title is visible, but this player has not supplied an ISRC. Apple cannot match its haptic track from these details alone."
