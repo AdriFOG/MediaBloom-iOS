@@ -36,6 +36,23 @@ def main():
     text += "\n\n" + MARK + "\n" + haptics + "\n"
     HOST.write_text(text, encoding="utf-8")
 
+    # Read-only guest probe is compiled into the MediaBloom-flavored TweakLoader.
+    # This existing loader runs inside shared guests; the Swift launcher does not.
+    loader_path = Path("TweakLoader/TweakLoader.m")
+    loader = loader_path.read_text(encoding="utf-8")
+    guest_probe = Path("../media-tools/haptics/MediaBloomGuestNowPlayingProbe.inc").read_text(encoding="utf-8")
+    loader = replace_once(
+        loader,
+        " __attribute__((constructor))\\nstatic void TweakLoaderConstructor()".replace("\\\\n", "\\n"),
+        "\\n" + guest_probe + "\\n __attribute__((constructor))\\nstatic void TweakLoaderConstructor()".replace("\\\\n", "\\n"),
+        "guest probe TweakLoader constructor",
+    )
+    loader = replace_once(loader, "    MBInstallAudioHooks();\\n".replace("\\\\n", "\\n"),
+        "    MBInstallAudioHooks();\\n    MBInstallGuestHapticsProbe();\\n".replace("\\\\n", "\\n"),
+        "opt-in guest probe entry",
+    )
+    loader_path.write_text(loader, encoding="utf-8")
+
     metadata = plistlib.loads(INFO.read_bytes())
     if metadata.get("BloomBoxMediaEdition") is not True:
         raise RuntimeError("Only the independent MediaBloom IPA may opt in")
