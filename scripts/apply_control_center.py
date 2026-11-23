@@ -67,7 +67,7 @@ struct MediaBloomControlBundle: WidgetBundle {
     assert project.count(anchor) == 2, "Expected two widget build configurations"
     project = project.replace(
         anchor,
-        "  CODE_SIGN_ENTITLEMENTS = ManzanaExpiryWidget/MediaBloomControl.entitlements;\\n"
+        "  CODE_SIGN_ENTITLEMENTS = ManzanaExpiryWidget/MediaBloomControl.entitlements;\n"
         + anchor,
     )
     # Controls are available on iOS 18+. MediaBloom's host can still target
