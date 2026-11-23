@@ -21,12 +21,14 @@ assert controls.count(": ControlWidget") == 1
 assert controls.count(": AppIntent") == 1
 assert controls.count("ControlWidgetButton(action:") == 1
 assert controls.count("StaticControlConfiguration(") == 1
-assert controls.count("provider: MBVolumeProvider()") == 1
+assert "provider: MBVolumeProvider()" not in controls
+assert "StaticControlConfiguration(kind: MBMasterVolume.kind)" in controls
+assert "let value = MBMasterVolume.level()" in controls
 assert "MBGeneralVolumeIntent" in controls
 assert '"com.kdt.bloomboxmedia.master.volume.v2"' in controls
 assert '"com.kdt.bloomboxmedia.master.volume.v2"' in (root/"LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift").read_text()
 assert "static let openAppWhenRun: Bool = false" in controls
-assert "func currentValue() async throws -> Int" in controls
+assert "private struct MBVolumeProvider:" not in controls
 
 # Native SF Symbols are mandatory: raster Label(image:) displayed '?' on iOS.
 assert "Label(" in controls and "systemImage: MBMasterVolume.icon(for: value)" in controls
@@ -50,15 +52,15 @@ assert "defaults.synchronize()" in controls
 assert "ControlCenter.shared.reloadControls(ofKind:" not in controls
 assert "return currentLevel(defaults: try sharedDefaults())" in controls
 assert "MBMasterVolume.level()" in controls
-# Regression: throwing from a ControlValueProvider made both controls blank.
+# Regression: an asynchronous ControlValueProvider was associated with a blank control.
+# Use a plain StaticControlConfiguration and read the state when WidgetKit
+# draws the button; WidgetKit automatically redraws after its App Intent.
 assert "case -1: return \"exclamationmark.triangle.fill\"" in controls
 assert "return -1" in controls
 assert 'Label(value < 0 ? "MediaBloom · Sin acceso"' in controls
 assert "return currentLevel(defaults: try sharedDefaults())" in controls
-assert "func currentValue() async throws -> Int" in controls
-provider_section = controls.split("private struct MBVolumeProvider: ControlValueProvider", 1)[1].split("struct MBGeneralVolumeIntent:",1)[0]
-assert "try MBMasterVolume.level()" not in provider_section
-assert "throws -> Int" in provider_section
+assert "private struct MBVolumeProvider:" not in controls
+assert controls.count("let value = MBMasterVolume.level()") == 1
 assert "MediaBloomControlTapCountV1" in controls
 
 # Actual SideStore-provisioned groups can have a Team ID suffix.
@@ -100,4 +102,4 @@ for bad in (
     "AVAudioSession.sharedInstance().setActive", "UIApplication.shared.open"
 ):
     assert bad not in controls, bad
-print("PASS: ONE stateful MediaBloom control with five supported native SF Symbols, matched shared gain keys and signing-aware group lookup")
+print("PASS: ONE provider-free MediaBloom control with five SF Symbols, shared gain keys and signing-aware group lookup")
