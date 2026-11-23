@@ -170,7 +170,7 @@ final class MediaBloomControlCenterSync: NSObject {
     @objc static func notify() {
         if #available(iOS 18.0, *) {
             ControlCenter.shared.reloadControls(
-                ofKind: "com.kdt.bloomboxmedia.master.volume")
+                ofKind: "com.kdt.bloomboxmedia.master.volume.v2")
         }
     }
 }
