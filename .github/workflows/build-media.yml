@@ -60,6 +60,18 @@ jobs:
       - name: Check shared media labels without breaking audio
         run: python3 ../media-tools/tests/test_shared_media_labels.py
 
+      - name: Restore checksum-verified Claude MediaBloom UI files
+        run: python3 ../media-tools/scripts/materialize_media_ui.py
+
+      - name: Integrate white-bubble MediaBloom Home into the existing launcher
+        run: python3 ../media-tools/scripts/apply_media_ui.py
+
+      - name: Check connected UI, guest volume keys and preserved classic settings
+        run: python3 ../media-tools/tests/test_media_ui.py
+
+      - name: Swift syntax check of both UI sources
+        run: xcrun swiftc -frontend -parse ../media-tools/ui/MediaBloomHomeView.swift ../media-tools/ui/MediaBloomHomeBridge.swift
+
       - name: Install MediaBloom system Control Center actions
         run: python3 ../media-tools/scripts/apply_control_center.py
 
