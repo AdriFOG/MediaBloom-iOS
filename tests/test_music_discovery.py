@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Offline safety and integration checks for favorite artist recommendations.
+
+CI does not make live requests, depend on an API key, or write to the user's
+MusicBrainz/ListenBrainz accounts. Manual device tests are still necessary.
+"""
+from pathlib import Path
+
+host = Path('LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift').read_text()
+source = Path('../media-tools/ui/MediaBloomMusicDiscovery.swift').read_text()
+script = Path('../media-tools/scripts/apply_music_discovery.py').read_text()
+assert 'MediaBloomOnboardingCompleteV1' in host
+assert 'fullScreenCover(isPresented: $showOnboarding)' in host
+assert 'MBMusicArtistPicker(model: model' in host
+assert 'MusicBrainz' in host
+assert 'MusicBrainzArtistMBID' not in host
+assert 'MediaBloomFavoriteArtistsV1' in host
+assert 'MediaBloomArtistMBIDsV1' in host
+assert 'MediaBloomPreferredMusicAppIDV1' in host
+assert 'MBMusicRecommendationCard(' in host
+assert 'onOpenSong: { model.onPlaySong($0) }' in host
+assert 'model.onPlaySong = { song in' in host
+assert 'try await player.runApp(multitask: false, urlStr: link.absoluteString)' in host
+assert 'UIApplication.shared.open(link)' not in script
+assert 'artistIDs.contains(artist.id)' in host
+assert 'return nil' in host
+assert 'https://musicbrainz.org/ws/2/artist/' in host
+assert 'https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/' in host
+assert 'https://coverartarchive.org/release/' in host
+assert 'musicbrainz.org", "api.listenbrainz.org' in host
+assert 'await MBMusicBrainzLimiter.shared.waitForSlot()' in host
+assert 'max(0, 1.15 - Date().timeIntervalSince(lastStarted))' in host
+assert 'User-Agent' in host
+assert 'cacheAge: TimeInterval = 12 * 60 * 60' in host
+assert 'MBMusicCatalogAPI.searchURL' in host
+assert 'recording_mbid' in host
+assert 'inc", value: "url-rels"' in host
+assert 'URLSession.shared.data(for: request)' in host
+# No third-party secret should ever be copied into iPhone applications.
+for forbidden in ('api_key=', 'shared_secret', 'last.fm/api', 'authorization: bearer'):
+    assert forbidden not in source.lower(), forbidden
+# No hard-coded favorite selection: examples are search suggestions only.
+assert 'ForEach(["Bad Bunny", "The Weeknd", "Billie Eilish"]' in source
+assert 'model.addArtist(artist.name)' in source
+assert 'model.favoriteArtists.sorted()' in source
+assert 'model.toggleArtist(name)' in source
+assert 'guard !favorites.isEmpty else' in source
+assert 'throw URLError' in source
+print('PASS: favorite-only discovery; public sources; honest search fallback; no secrets')

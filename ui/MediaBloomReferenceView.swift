@@ -19,7 +19,11 @@ struct MediaBloomReferenceView: View {
     @AppStorage("BloomBoxPreferredLanguage", store: LCUtils.appGroupUserDefault)
     private var preferredLanguage = "system"
     @State private var showArtistEditor = false
-    @State private var newArtist = ""
+    @State private var showOnboarding = false
+    @State private var currentRecommendation = 0
+    @StateObject private var discovery = MBMusicDiscovery()
+    @AppStorage("MediaBloomOnboardingCompleteV1") private var onboardingComplete = false
+    @AppStorage("MediaBloomPreferredMusicAppIDV1") private var preferredPlayerID = ""
     @State private var appPage = 0
     @State private var showAppearance = false
     @State private var individualApp: MediaBloomHomeApp?
@@ -50,9 +54,15 @@ struct MediaBloomReferenceView: View {
             !(Locale.preferredLanguages.first ?? "es").lowercased().hasPrefix("es"))
     }
     private func t(_ es: String, _ en: String) -> String { english ? en : es }
+    private var musicApps: [MediaBloomHomeApp] {
+        let supported: Set<String> = ["com.google.ios.youtubemusic", "com.spotify.client",
+            "com.apple.music", "com.deezer.deezer", "com.google.ios.youtube"]
+        return model.apps.filter { supported.contains($0.id.lowercased()) }
+    }
     private var musicApp: MediaBloomHomeApp? {
-        model.apps.first(where: { $0.id.lowercased() == "com.google.ios.youtubemusic" }) ??
-        model.apps.first(where: { $0.symbol == "music.note" })
+        musicApps.first(where: { $0.id == preferredPlayerID }) ??
+        musicApps.first(where: { $0.id.lowercased() == "com.google.ios.youtubemusic" }) ??
+        musicApps.first
     }
     private var pageCount: Int { max(1, (model.visibleApps.count + 5) / 6) }
     private var artistSummary: String {
@@ -75,6 +85,11 @@ struct MediaBloomReferenceView: View {
         .background(wallpaperBackground)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showArtistEditor) { artistEditor }
+        .fullScreenCover(isPresented: $showOnboarding) {
+            MBMusicArtistPicker(model: model, catalog: discovery, english: english,
+                                onboarding: true, musicApps: musicApps,
+                                onFinish: { onboardingComplete = true; showOnboarding = false })
+        }
         .sheet(isPresented: $showAppearance) {
             MediaBloomAppearanceSheet(onOpenAdvanced: {
                 showAppearance = false
@@ -85,7 +100,18 @@ struct MediaBloomReferenceView: View {
             })
         }
         .sheet(item: $individualApp) { app in individualVolumeEditor(app) }
-        .onAppear { wallpaperImage = MBWallpaperStore.load() }
+        .onAppear {
+            wallpaperImage = MBWallpaperStore.load()
+            discovery.refresh(model.favoriteArtists)
+            if !onboardingComplete {
+                if model.favoriteArtists.isEmpty { showOnboarding = true }
+                else { onboardingComplete = true } // Preserve existing users' favorites.
+            }
+        }
+        .onChange(of: model.favoriteArtists) { names in
+            currentRecommendation = 0
+            discovery.refresh(names)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .mediaBloomWallpaperDidChange)) { _ in
             wallpaperImage = MBWallpaperStore.load()
         }
@@ -334,27 +360,15 @@ struct MediaBloomReferenceView: View {
     }
 
     private func musicButton() -> some View {
-        Button(action: model.onPlayRecommendation) {
-            HStack(spacing: 8) {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.white)
-                    .frame(width: 35, height: 35)
-                    .background(theme.ink, in: Circle())
-                Text(musicApp.map { t("Abrir en \($0.name)", "Open in \($0.name)") } ??
-                     t("Agrega una app de música", "Add a music app"))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .padding(.leading, 5)
-            .padding(.trailing, 16)
-            .frame(height: 45)
-            .background(theme.white, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(musicApp == nil)
+        MBMusicRecommendationCard(
+            songs: discovery.songs, isLoading: discovery.loading,
+            error: discovery.loadError,
+            hasFavorites: !model.favoriteArtists.isEmpty,
+            playerAvailable: musicApp != nil, english: english,
+            theme: theme, currentIndex: $currentRecommendation,
+            onOpenSong: { model.onPlaySong($0) },
+            onSelectArtists: { showArtistEditor = true },
+            onRetry: { discovery.refresh(model.favoriteArtists) })
     }
 
     // MARK: - Artists
@@ -382,7 +396,7 @@ struct MediaBloomReferenceView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(t("Agregar artista", "Add artist"))
             }
-            if model.artists.isEmpty {
+            if model.favoriteArtists.isEmpty {
                 Button { showArtistEditor = true } label: {
                     Text(t("+ Agregar artista", "+ Add an artist"))
                         .font(.system(size: 12, weight: .medium))
@@ -394,7 +408,7 @@ struct MediaBloomReferenceView: View {
             } else {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5),
                                          count: landscape ? 4 : 3), spacing: 7) {
-                    ForEach(Array(model.artists.prefix(landscape ? 8 : 6)), id: \.self) { artist in
+                    ForEach(Array(model.favoriteArtists.sorted().prefix(landscape ? 8 : 6)), id: \.self) { artist in
                         artistChip(artist)
                     }
                 }
@@ -432,37 +446,9 @@ struct MediaBloomReferenceView: View {
     }
 
     private var artistEditor: some View {
-        NavigationView {
-            VStack(alignment: .leading, spacing: 14) {
-                TextField(t("Nombre del artista", "Artist name"), text: $newArtist)
-                    .textInputAutocapitalization(.words)
-                    .textFieldStyle(.roundedBorder)
-                    .submitLabel(.done)
-                    .onSubmit(addArtist)
-                Text(t("Se guarda únicamente en este iPhone. Mantén presionado un artista para eliminarlo.",
-                       "Saved on this iPhone only. Long-press an artist to remove it."))
-                    .font(.footnote).foregroundColor(.secondary)
-                Spacer()
-            }
-            .padding(20)
-            .navigationTitle(t("Agregar artista", "Add artist"))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(t("Cancelar", "Cancel")) { showArtistEditor = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(t("Guardar", "Save"), action: addArtist)
-                        .disabled(newArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-        .navigationViewStyle(.stack)
-    }
-
-    private func addArtist() {
-        model.addArtist(newArtist)
-        newArtist = ""
-        showArtistEditor = false
+        MBMusicArtistPicker(model: model, catalog: discovery, english: english,
+                            onboarding: false, musicApps: musicApps,
+                            onFinish: { showArtistEditor = false })
     }
 
     // MARK: - Six real installed apps, 3x2, with actual selection and paging

@@ -81,8 +81,14 @@ jobs:
       - name: Verify appearance, audio isolation and app-level volume menu
         run: python3 ../media-tools/tests/test_media_customization.py
 
+      - name: Connect favorites-only music discovery and guest song links
+        run: python3 ../media-tools/scripts/apply_music_discovery.py
+
+      - name: Validate favorites, artists, catalog APIs and song routing
+        run: python3 ../media-tools/tests/test_music_discovery.py
+
       - name: Swift syntax check of responsive UI sources
-        run: xcrun swiftc -frontend -parse ../media-tools/ui/MediaBloomHomeView.swift ../media-tools/ui/MediaBloomHomeBridge.swift ../media-tools/ui/MediaBloomReferenceView.swift ../media-tools/ui/MediaBloomAppearance.swift
+        run: xcrun swiftc -frontend -parse ../media-tools/ui/MediaBloomHomeView.swift ../media-tools/ui/MediaBloomHomeBridge.swift ../media-tools/ui/MediaBloomReferenceView.swift ../media-tools/ui/MediaBloomAppearance.swift ../media-tools/ui/MediaBloomMusicDiscovery.swift
 
       - name: Install MediaBloom system Control Center actions
         run: python3 ../media-tools/scripts/apply_control_center.py
