@@ -366,6 +366,47 @@ struct MediaBloomAppearanceSheet: View {
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
+                if haptics.captureActive {
+                    haptics.stopCapture(english: english)
+                } else {
+                    haptics.startCapture(english: english)
+                }
+            } label: {
+                Label(haptics.captureActive
+                      ? t("Detener registro", "Stop capture")
+                      : t("Iniciar registro para YouTube Music", "Start YouTube Music capture"),
+                      systemImage: haptics.captureActive ? "stop.circle.fill" : "record.circle")
+            }
+            if !haptics.lastSample.isEmpty {
+                Text(t("Última revisión guardada: ", "Last saved sample: ") + haptics.lastSample
+                     + " (\(haptics.sampleCount))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            if !haptics.recordedEvents.isEmpty {
+                Text(t("Registro conservado después de cerrar MediaBloom", "Log preserved across force-close"))
+                    .font(.footnote.weight(.semibold))
+                Text(haptics.recordedEvents.suffix(8).joined(separator: "\n"))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    UIPasteboard.general.string = haptics.recordedEvents.joined(separator: "\n")
+                } label: {
+                    Label(t("Copiar registro", "Copy log"), systemImage: "doc.on.doc")
+                }
+                Button(role: .destructive) {
+                    haptics.clearCapture()
+                } label: {
+                    Label(t("Borrar registro", "Clear log"), systemImage: "trash")
+                }
+            }
+            Text(t("El registro lee datos locales cada 2 segundos mientras MediaBloom siga ejecutándose. No graba audio ni usa el micrófono. Las vibraciones sincronizadas deben confirmarse por iOS.",
+                   "The probe checks local data every 2 seconds while MediaBloom is running. No audio or microphone capture. iOS must confirm actual synchronized haptics."))
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Button {
                 haptics.testHardware(english: english)
             } label: {
                 Label(t("Probar 3 vibraciones", "Test 3 haptic taps"),
@@ -382,8 +423,8 @@ struct MediaBloomAppearanceSheet: View {
             } label: {
                 Label(t("Volver a comprobar", "Check again"), systemImage: "arrow.clockwise")
             }
-            Text(t("Primero abre esta pantalla, después reproduce una canción en la app compartida y vuelve aquí para comprobar los datos. La prueba de tres toques NO sigue el ritmo. Para las vibraciones oficiales, el reproductor debe enviar el ISRC a iOS y Apple debe tener la pista háptica.",
-                   "Open this screen first, then play a song in the shared app and return to check its data. The three taps are NOT beat-synced. Official haptics require the player to provide the ISRC and Apple to have a matching haptic track."))
+            Text(t("Activa el registro antes de abrir YouTube Music. Reproduce la canción y, como MediaBloom no tiene botón de regreso, cierra y vuelve a abrir MediaBloom. El registro seguirá guardado aquí. Si no aparecen datos, puede deberse a que la app compartida no los expone; no es prueba de que la canción no exista.",
+                   "Start capture before launching YouTube Music. Play a song, then force-close and reopen MediaBloom since there is no return button. The log will stay saved here. Missing metadata only means it was not visible to this probe."))
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
