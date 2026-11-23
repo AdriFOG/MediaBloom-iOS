@@ -33,12 +33,7 @@ import WidgetKit
 @main
 struct MediaBloomControlBundle: WidgetBundle {
     var body: some Widget {
-        MBMusicLouderControl()
-        MBMusicQuieterControl()
-        MBMusicMuteControl()
-        MBVideoLouderControl()
-        MBVideoQuieterControl()
-        MBVideoMuteControl()
+        MBGeneralVolumeControl()
     }
 }
 """)
@@ -92,9 +87,9 @@ struct MediaBloomControlBundle: WidgetBundle {
     es = "Volumen independiente para YouTube y YouTube Music. Actívalo, vuelve a abrir la app y usa el botón flotante del altavoz mientras reproduce."
     assert home_text.count(en) == 1 and home_text.count(es) == 1
     home_text = home_text.replace(en,
-        "Separate volume for YouTube and YouTube Music. Reopen media playback after enabling. Use the floating speaker inside the player, or add MediaBloom Music / Video volume buttons from iOS Control Center > Add a Control to adjust it from other apps.")
+        "Separate volume for YouTube and YouTube Music. Reopen media playback after enabling. Use the floating speaker inside the player, or add the single MediaBloom Volume control from iOS Control Center > Add a Control to change both players from other apps.")
     home_text = home_text.replace(es,
-        "Volumen independiente para YouTube y YouTube Music. Actívalo y vuelve a abrir la reproducción. Usa el altavoz flotante dentro del reproductor o añade los botones de MediaBloom desde Centro de control > Añadir un control para ajustar la música desde otras apps.")
+        "Volumen independiente para YouTube y YouTube Music. Actívalo y vuelve a abrir la reproducción. Usa el altavoz flotante dentro del reproductor o añade el control único MediaBloom Volumen desde Centro de control > Añadir un control para ajustar Música y Video desde otras apps.")
     home.write_text(home_text)
 
     print("PASS: standalone MediaBloom Control Center widget target + shared App Groups")
