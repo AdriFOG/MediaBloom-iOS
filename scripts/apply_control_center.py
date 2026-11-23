@@ -56,8 +56,8 @@ struct MediaBloomControlBundle: WidgetBundle {
 <plist version="1.0"><dict>
   <key>com.apple.security.application-groups</key>
   <array>
-    <string>$(APP_GROUP_SIDESTORE)</string>
-    <string>$(APP_GROUP_ALTSTORE)</string>
+    <string>group.com.SideStore.SideStore</string>
+    <string>group.com.rileytestut.AltStore</string>
   </array>
 </dict></plist>
 """)
