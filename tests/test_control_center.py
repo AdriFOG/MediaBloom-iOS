@@ -44,7 +44,11 @@ assert '"com.google.ios.youtubemusic"' in controls
 assert '"com.google.ios.youtube"' in controls
 assert '"MediaBloomAudioGainV1." + guest' in controls
 assert "defaults.synchronize()" in controls
-assert "ControlCenter.shared.reloadControls(ofKind:" in controls
+# WidgetKit refreshes button controls after perform() returns, not before.
+assert "ControlCenter.shared.reloadControls(ofKind:" not in controls
+assert "return currentLevel(defaults: try sharedDefaults())" in controls
+assert "try MBMasterVolume.level()" in controls
+assert "MediaBloomControlTapCountV1" in controls
 
 # Actual SideStore-provisioned groups can have a Team ID suffix.
 assert "kSecAttrAccessGroup" in controls
@@ -67,6 +71,16 @@ assert project.count("BDA10000000000000000000D /* ManzanaExpiryWidget.appex in E
 assert project.count("IPHONEOS_DEPLOYMENT_TARGET = 18.0;") >= 2
 assert 'MBInstallAudioHooks();' in audio
 assert '[NSUserDefaults.lcSharedDefaults synchronize];' in audio
+home = (root/"LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift").read_text()
+assert 'import WidgetKit' in home
+assert '@objc(MediaBloomControlCenterSync)' in home
+assert 'ControlCenter.shared.reloadControls(' in home
+assert 'MediaBloomMasterGainV1' in home
+assert 'controlCenterTapCount' in home
+assert 'controlCenterGain' in home
+assert 'MediaBloomMasterGainV1' in audio
+assert 'NSClassFromString(@"MediaBloomControlCenterSync")' in audio
+assert 'refreshSelector' in audio
 for bad in (
     "outputVolume =", "MPVolumeView(", "SystemVolumeDidChangeNotification",
     "AVAudioSession.sharedInstance().setActive", "UIApplication.shared.open"
