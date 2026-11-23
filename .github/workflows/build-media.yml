@@ -87,6 +87,12 @@ jobs:
       - name: Validate favorites, artists, catalog APIs and song routing
         run: python3 ../media-tools/tests/test_music_discovery.py
 
+      - name: Connect shared media labels and instant Home refresh
+        run: python3 ../media-tools/scripts/apply_final_polish.py
+
+      - name: Validate tag compatibility, near-invisible glass, cached covers and shuffled recommendations
+        run: python3 ../media-tools/tests/test_final_polish.py
+
       - name: Swift syntax check of responsive UI sources
         run: xcrun swiftc -frontend -parse ../media-tools/ui/MediaBloomHomeView.swift ../media-tools/ui/MediaBloomHomeBridge.swift ../media-tools/ui/MediaBloomReferenceView.swift ../media-tools/ui/MediaBloomAppearance.swift ../media-tools/ui/MediaBloomMusicDiscovery.swift
 
