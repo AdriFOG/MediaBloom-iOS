@@ -181,7 +181,7 @@ struct MediaBloomAppearanceSheet: View {
     @State private var showFiles = false
     @State private var hasWallpaper = false
     @State private var imageError = false
-    @StateObject private var haptics = MBHapticsDiagnostic()
+    @StateObject private var haptics = MBHapticsDiagnostic.shared
 
     private var english: Bool {
         language == "en" || (language == "system" &&
@@ -209,7 +209,7 @@ struct MediaBloomAppearanceSheet: View {
             }
             .onAppear {
                 hasWallpaper = MBWallpaperStore.load() != nil
-                haptics.refresh(english: english)
+                haptics.beginObservation(english: english)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 haptics.refresh(english: english)
@@ -353,7 +353,15 @@ struct MediaBloomAppearanceSheet: View {
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
+            Text(haptics.nowPlayingSummary)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Text(haptics.metadataStatus)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Label(haptics.playbackSummary, systemImage: "waveform.path.ecg")
                 .font(.footnote)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -374,8 +382,8 @@ struct MediaBloomAppearanceSheet: View {
             } label: {
                 Label(t("Volver a comprobar", "Check again"), systemImage: "arrow.clockwise")
             }
-            Text(t("Para activar la función de Apple: Ajustes → Accesibilidad → Música háptica. La prueba de tres toques NO sigue el ritmo; sirve para comprobar el motor de vibración. Para sincronizar canciones, el reproductor compartido debe informar a iOS el código ISRC.",
-                   "To enable Apple's feature: Settings → Accessibility → Music Haptics. The three taps do NOT follow the beat; this only tests the hardware. Synced songs require the shared player to report an ISRC to iOS."))
+            Text(t("Primero abre esta pantalla, después reproduce una canción en la app compartida y vuelve aquí para comprobar los datos. La prueba de tres toques NO sigue el ritmo. Para las vibraciones oficiales, el reproductor debe enviar el ISRC a iOS y Apple debe tener la pista háptica.",
+                   "Open this screen first, then play a song in the shared app and return to check its data. The three taps are NOT beat-synced. Official haptics require the player to provide the ISRC and Apple to have a matching haptic track."))
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
