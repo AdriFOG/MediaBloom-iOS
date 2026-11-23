@@ -377,13 +377,37 @@ struct MediaBloomAppearanceSheet: View {
                       : t("Iniciar registro para YouTube Music", "Start YouTube Music capture"),
                       systemImage: haptics.captureActive ? "stop.circle.fill" : "record.circle")
             }
+            if haptics.guestSamples > 0 || !haptics.guestEvents.isEmpty {
+                Label(t("Diagnóstico desde YouTube Music", "YouTube Music guest diagnostic"),
+                      systemImage: "waveform.path.ecg")
+                    .font(.subheadline.weight(.semibold))
+                Text(t("Lecturas dentro del reproductor: ", "Samples inside player: ")
+                     + "\(haptics.guestSamples)")
+                    .font(.footnote.monospacedDigit())
+                if !haptics.guestLastSample.isEmpty {
+                    Text(t("Última lectura del reproductor: ", "Last guest sample: ")
+                         + haptics.guestLastSample)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+                Text(haptics.guestEvents.suffix(12).joined(separator: "\n"))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(t("Sin lecturas desde YouTube Music. Inicia el registro y abre el reproductor desde MediaBloom.",
+                       "No in-guest data yet. Start capture, then open YouTube Music from MediaBloom."))
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
             if !haptics.lastSample.isEmpty {
-                Text(t("Última revisión guardada: ", "Last saved sample: ") + haptics.lastSample
+                Text(t("Última revisión del launcher: ", "Last launcher sample: ") + haptics.lastSample
                      + " (\(haptics.sampleCount))")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            if !haptics.recordedEvents.isEmpty {
+            if !haptics.recordedEvents.isEmpty || !haptics.guestEvents.isEmpty {
                 Text(t("Registro conservado después de cerrar MediaBloom", "Log preserved across force-close"))
                     .font(.footnote.weight(.semibold))
                 Text(haptics.recordedEvents.suffix(8).joined(separator: "\n"))
@@ -392,7 +416,8 @@ struct MediaBloomAppearanceSheet: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
-                    UIPasteboard.general.string = haptics.recordedEvents.joined(separator: "\n")
+                    UIPasteboard.general.string = (haptics.guestEvents
+                        + haptics.recordedEvents).joined(separator: "\n")
                 } label: {
                     Label(t("Copiar registro", "Copy log"), systemImage: "doc.on.doc")
                 }
@@ -423,8 +448,8 @@ struct MediaBloomAppearanceSheet: View {
             } label: {
                 Label(t("Volver a comprobar", "Check again"), systemImage: "arrow.clockwise")
             }
-            Text(t("Activa el registro antes de abrir YouTube Music. Reproduce la canción y, como MediaBloom no tiene botón de regreso, cierra y vuelve a abrir MediaBloom. El registro seguirá guardado aquí. Si no aparecen datos, puede deberse a que la app compartida no los expone; no es prueba de que la canción no exista.",
-                   "Start capture before launching YouTube Music. Play a song, then force-close and reopen MediaBloom since there is no return button. The log will stay saved here. Missing metadata only means it was not visible to this probe."))
+            Text(t("Activa el registro, abre YouTube Music desde MediaBloom y reproduce una canción. Luego cierra MediaBloom y vuelve a abrirlo: revisa la sección 'Diagnóstico desde YouTube Music' y copia el registro. Un ISRC ausente no demuestra que la canción carezca de haptics.",
+                   "Start capture, open YouTube Music inside MediaBloom and play a song. Then force-close and reopen MediaBloom: check the in-guest diagnostic and copy the log. A missing ISRC does not prove the song has no haptic track."))
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
