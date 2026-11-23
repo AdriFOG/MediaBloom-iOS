@@ -23,6 +23,8 @@ assert controls.count("ControlWidgetButton(action:") == 1
 assert controls.count("StaticControlConfiguration(") == 1
 assert controls.count("provider: MBVolumeProvider()") == 1
 assert "MBGeneralVolumeIntent" in controls
+assert '"com.kdt.bloomboxmedia.master.volume.v2"' in controls
+assert '"com.kdt.bloomboxmedia.master.volume.v2"' in (root/"LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift").read_text()
 assert "static let openAppWhenRun: Bool = false" in controls
 assert "func currentValue() async throws -> Int" in controls
 
