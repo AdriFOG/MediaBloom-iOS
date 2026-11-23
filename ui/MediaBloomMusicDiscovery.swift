@@ -387,6 +387,8 @@ actor MBMusicCatalogAPI {
 
 // Decomposed views to avoid huge SwiftUI type-check expressions in the
 // existing pinned BloomBox host, as discovered in the previous release.
+// A full-bleed hero: the actual recommended album art occupies the entire
+// music card in portrait and landscape. Never invents art or track URLs.
 struct MBMusicRecommendationCard: View {
     let songs: [MBMusicTrack]
     let isLoading: Bool
@@ -400,88 +402,205 @@ struct MBMusicRecommendationCard: View {
     let onSelectArtists: () -> Void
     let onRetry: () -> Void
 
-    private var song: MBMusicTrack? {
+    private var currentSong: MBMusicTrack? {
         guard !songs.isEmpty else { return nil }
         return songs[max(0, currentIndex) % songs.count]
     }
 
     var body: some View {
-        HStack(spacing: 7) {
-            if let track = song {
-                cover(for: track)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(track.title)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                    Text(track.artist)
-                        .font(.system(size: 10))
-                        .lineLimit(1)
-                        .opacity(0.75)
-                    Text(english ? "Open track" : "Abrir canción")
-                        .font(.system(size: 9, weight: .medium))
-                        .opacity(0.7)
+        GeometryReader { geometry in
+            Group {
+                if let track = currentSong {
+                    fullArtworkCard(track, size: geometry.size)
+                } else {
+                    emptyCard(size: geometry.size)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Button { onOpenSong(track) } label: {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.white)
-                        .frame(width: 32, height: 32)
-                        .background(theme.ink, in: Circle())
-                }
-                .disabled(!playerAvailable)
-                .accessibilityLabel(english ? "Open track" : "Abrir canción")
-                if songs.count > 1 {
-                    Button { currentIndex = (currentIndex + 1) % songs.count } label: {
-                        Image(systemName: "chevron.right.circle.fill")
-                            .font(.system(size: 17))
-                    }
-                    .accessibilityLabel(english ? "Next suggestion" : "Siguiente recomendación")
-                }
-            } else if isLoading {
-                ProgressView().tint(theme.ink)
-                Text(english ? "Finding your music…" : "Buscando tu música…")
-                    .font(.system(size: 11))
-            } else {
-                Button(action: hasFavorites ? onRetry : onSelectArtists) {
-                    HStack(spacing: 8) {
-                        Image(systemName: hasFavorites ? "arrow.clockwise" : "plus.circle.fill")
-                        Text(!hasFavorites
-                            ? (english ? "Choose favorite artists" : "Elige tus artistas favoritos")
-                            : error != nil
-                              ? (english ? "Retry music search" : "Reintentar recomendaciones")
-                              : (english ? "No tracks found yet" : "Aún no hay canciones"))
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                }
-                .buttonStyle(.plain)
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipShape(RoundedRectangle(cornerRadius: 29, style: .continuous))
         }
-        .foregroundColor(theme.ink)
-        .padding(.horizontal, 9)
-        .frame(maxWidth: 265)
-        .frame(height: 55)
-        .background(theme.white, in: RoundedRectangle(cornerRadius: 27, style: .continuous))
-        .buttonStyle(.plain)
     }
 
-    @ViewBuilder private func cover(for song: MBMusicTrack) -> some View {
-        if let url = song.coverURL {
-            AsyncImage(url: url) { state in
+    private func fullArtworkCard(_ track: MBMusicTrack, size: CGSize) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            coverBackground(track, size: size)
+
+            // Text remains readable on very bright or detailed album artwork.
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(0.66), location: 0),
+                    .init(color: .black.opacity(0.08), location: 0.42),
+                    .init(color: .black.opacity(0.84), location: 1)
+                ],
+                startPoint: .top, endPoint: .bottom)
+
+            Button { onOpenSong(track) } label: {
+                albumForeground(track, size: size)
+                    .frame(width: size.width, height: size.height)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!playerAvailable)
+            .accessibilityLabel((english ? "Open " : "Abrir ") +
+                                track.title + " · " + track.artist)
+
+            if songs.count > 1 {
+                Button {
+                    currentIndex = (currentIndex + 1) % songs.count
+                } label: {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.44), in: Circle())
+                        .overlay(Circle().stroke(Color.white.opacity(0.62), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 18)
+                .padding(.bottom, 21)
+                .accessibilityLabel(english ? "Next song" : "Siguiente canción")
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .foregroundColor(.white)
+    }
+
+    private func albumForeground(_ track: MBMusicTrack, size: CGSize) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(english ? "YOUR FAVORITES MIX" : "MIX DE TUS FAVORITOS")
+                .font(.system(size: 13, weight: .bold))
+                .tracking(1.0)
+            Text(english ? "Songs from your favorite artists" :
+                 "Canciones de tus artistas favoritos")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.84))
+                .padding(.top, 5)
+
+            Spacer(minLength: 16)
+
+            if !track.album.isEmpty {
+                Text(track.album.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(0.7)
+                    .lineLimit(1)
+                    .foregroundColor(Color.white.opacity(0.80))
+                    .padding(.bottom, 5)
+            }
+            Text(track.title)
+                .font(.system(size: size.width > 370 ? 29 : 25, weight: .bold))
+                .lineLimit(2)
+                .minimumScaleFactor(0.76)
+                .shadow(color: .black.opacity(0.3), radius: 5)
+
+            Text(track.artist)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.91))
+                .lineLimit(1)
+                .padding(.top, 5)
+
+            HStack(spacing: 10) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(theme.ink)
+                    .frame(width: 48, height: 48)
+                    .background(Color.white, in: Circle())
+                Text(playerAvailable ?
+                     (english ? "OPEN SONG" : "ABRIR CANCIÓN") :
+                     (english ? "NO MUSIC PLAYER" : "SIN REPRODUCTOR"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 16)
+        }
+        .padding(.horizontal, size.width < 340 ? 20 : 24)
+        .padding(.vertical, size.height < 260 ? 16 : 22)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func coverBackground(_ track: MBMusicTrack, size: CGSize) -> some View {
+        if let artworkURL = track.coverURL {
+            AsyncImage(url: artworkURL) { state in
                 if let image = state.image {
-                    image.resizable().scaledToFill()
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size.width, height: size.height)
+                        .clipped()
                 } else {
-                    Image(systemName: "music.note")
-                        .font(.system(size: 19)).foregroundColor(theme.ink)
+                    geometricBackground(size: size)
                 }
             }
-            .frame(width: 41, height: 41)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
         } else {
-            Image(systemName: "music.note")
-                .foregroundColor(theme.ink)
-                .frame(width: 41, height: 41)
-                .background(theme.gray, in: RoundedRectangle(cornerRadius: 12))
+            geometricBackground(size: size)
+        }
+    }
+
+    // Restore MediaBloom's original circles if this album has no cover art.
+    private func geometricBackground(size: CGSize) -> some View {
+        ZStack {
+            theme.gray
+            Circle()
+                .fill(theme.ink)
+                .frame(width: size.width * 0.83, height: size.width * 0.83)
+                .offset(x: size.width * 0.24, y: -size.height * 0.14)
+            Circle()
+                .fill(theme.coral)
+                .frame(width: size.width * 0.36, height: size.width * 0.36)
+                .offset(x: size.width * 0.31, y: -size.height * 0.08)
+            Circle()
+                .fill(theme.white)
+                .frame(width: size.width * 1.10, height: size.width * 1.10)
+                .offset(x: size.width * 0.31, y: size.height * 0.48)
+        }
+        .frame(width: size.width, height: size.height)
+        .clipped()
+    }
+
+    private func emptyCard(size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            geometricBackground(size: size)
+            VStack(alignment: .leading, spacing: 9) {
+                Text(english ? "Your favorites mix" : "Mix de tus favoritos")
+                    .font(.system(size: 14, weight: .medium))
+                Text(english ? "Based on your favorite artists" :
+                     "Basado en tus artistas favoritos")
+                    .font(.system(size: 23, weight: .bold))
+                    .lineLimit(3)
+
+                Spacer(minLength: 18)
+
+                Button(action: hasFavorites ? onRetry : onSelectArtists) {
+                    HStack(spacing: 9) {
+                        if isLoading {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: hasFavorites ? "arrow.clockwise" : "plus.circle.fill")
+                        }
+                        Text(isLoading ?
+                            (english ? "Finding your music…" : "Buscando tu música…") :
+                            !hasFavorites ?
+                            (english ? "Choose favorite artists" : "Elige tus artistas favoritos") :
+                            error != nil ?
+                            (english ? "Retry recommendations" : "Reintentar recomendaciones") :
+                            (english ? "No tracks found yet" : "Aún no hay canciones"))
+                            .lineLimit(2)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 17)
+                    .padding(.vertical, 13)
+                    .background(theme.ink, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isLoading)
+            }
+            .foregroundColor(theme.ink)
+            .padding(24)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
         }
     }
 }
