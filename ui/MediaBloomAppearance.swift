@@ -181,6 +181,7 @@ struct MediaBloomAppearanceSheet: View {
     @State private var showFiles = false
     @State private var hasWallpaper = false
     @State private var imageError = false
+    @StateObject private var haptics = MBHapticsDiagnostic()
 
     private var english: Bool {
         language == "en" || (language == "system" &&
@@ -196,6 +197,7 @@ struct MediaBloomAppearanceSheet: View {
                 glassSection
                 mediaTagsSection
                 audioSection
+                hapticsSection
                 advancedSection
             }
             .navigationTitle(t("Apariencia", "Appearance"))
@@ -205,7 +207,13 @@ struct MediaBloomAppearanceSheet: View {
                     Button(t("Listo", "Done")) { dismiss() }
                 }
             }
-            .onAppear { hasWallpaper = MBWallpaperStore.load() != nil }
+            .onAppear {
+                hasWallpaper = MBWallpaperStore.load() != nil
+                haptics.refresh(english: english)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                haptics.refresh(english: english)
+            }
             .sheet(isPresented: $showPhotos) {
                 MBPhotosSelection { image in saveWallpaper(image) }
             }
@@ -322,6 +330,55 @@ struct MediaBloomAppearanceSheet: View {
             Text(t("Después de activarlo, vuelve a abrir las apps multimedia. El volumen general se combina con el volumen individual.",
                    "Reopen media apps after enabling. Master and individual gain combine."))
                 .font(.footnote).foregroundColor(.secondary)
+        }
+    }
+
+    private var hapticsSection: some View {
+        Section(header: Text(t("Música háptica · Prueba", "Music Haptics · Test"))) {
+            HStack(spacing: 10) {
+                Image(systemName: haptics.hardwareAvailable ? "waveform" : "waveform.slash")
+                    .foregroundColor(haptics.hardwareAvailable ? .green : .secondary)
+                Text(haptics.hardwareAvailable
+                     ? t("Motor de vibración disponible", "Haptic engine available")
+                     : t("Motor de vibración no disponible", "Haptic engine unavailable"))
+            }
+            if let active = haptics.officialActive {
+                Label(active
+                      ? t("Music Haptics de iOS: activado", "iOS Music Haptics: enabled")
+                      : t("Music Haptics de iOS: desactivado", "iOS Music Haptics: disabled"),
+                      systemImage: active ? "checkmark.circle" : "circle")
+            } else {
+                Text(t("La función oficial requiere iOS 18 o posterior.",
+                       "Apple Music Haptics requires iOS 18 or later."))
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            Text(haptics.metadataStatus)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                haptics.testHardware(english: english)
+            } label: {
+                Label(t("Probar 3 vibraciones", "Test 3 haptic taps"),
+                      systemImage: "waveform.path")
+            }
+            .disabled(!haptics.hardwareAvailable)
+            if !haptics.testResult.isEmpty {
+                Text(haptics.testResult)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            Button {
+                haptics.refresh(english: english)
+            } label: {
+                Label(t("Volver a comprobar", "Check again"), systemImage: "arrow.clockwise")
+            }
+            Text(t("Para activar la función de Apple: Ajustes → Accesibilidad → Música háptica. La prueba de tres toques NO sigue el ritmo; sirve para comprobar el motor de vibración. Para sincronizar canciones, el reproductor compartido debe informar a iOS el código ISRC.",
+                   "To enable Apple's feature: Settings → Accessibility → Music Haptics. The three taps do NOT follow the beat; this only tests the hardware. Synced songs require the shared player to report an ISRC to iOS."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
