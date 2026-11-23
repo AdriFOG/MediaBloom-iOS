@@ -1,53 +1,61 @@
 #!/usr/bin/env python3
-"""Source contract for the MediaBloom-only system Control Center integration."""
+"""Contract: ONE native Control Center volume button in MediaBloom."""
 from pathlib import Path
 import plistlib
 
-root=Path(".")
-widget=(root/"ManzanaExpiryWidget/ManzanaExpiryWidget.swift").read_text()
-controls=(root/"ManzanaExpiryWidget/MediaBloomControlCenter.swift").read_text()
-project=(root/"LiveContainer.xcodeproj/project.pbxproj").read_text()
-entitlements=plistlib.loads(
-    (root/"ManzanaExpiryWidget/MediaBloomControl.entitlements").read_bytes())
-info=plistlib.loads((root/"ManzanaExpiryWidget/Info.plist").read_bytes())
-audio=(root/"TweakLoader/TweakLoader.m").read_text()
+root = Path(".")
+widget = (root/"ManzanaExpiryWidget/ManzanaExpiryWidget.swift").read_text()
+controls = (root/"ManzanaExpiryWidget/MediaBloomControlCenter.swift").read_text()
+project = (root/"LiveContainer.xcodeproj/project.pbxproj").read_text()
+entitlements = plistlib.loads(
+    (root/"ManzanaExpiryWidget/MediaBloomControl.entitlements").read_bytes()
+)
+info = plistlib.loads((root/"ManzanaExpiryWidget/Info.plist").read_bytes())
+audio = (root/"TweakLoader/TweakLoader.m").read_text()
 
 assert "@main" in widget and "MediaBloomControlBundle" in widget
 assert "ManzanaExpiryLiveActivity()" not in widget
-assert widget.count("Control()") == 6
-assert controls.count(": ControlWidget") == 6
-assert controls.count(": AppIntent") == 6
-assert controls.count("ControlWidgetButton(action:") == 6
-assert controls.count("StaticControlConfiguration(") == 6
-assert controls.count("provider: MBGlassLevelProvider(bundle:") == 6
-for key in (
-    "com.google.ios.youtubemusic", "com.google.ios.youtube",
-    "MediaBloomAudioGainV1.",
-    "group.com.SideStore.SideStore", "group.com.rileytestut.AltStore",
-    "containerURL(forSecurityApplicationGroupIdentifier:",
-    "UserDefaults(suiteName:", "defaults.synchronize()",
-    "MBMusicLouderControl", "MBMusicQuieterControl", "MBMusicMuteControl",
-    "MBVideoLouderControl", "MBVideoQuieterControl", "MBVideoMuteControl",
-):
-    assert key in controls or key in widget, key
-assert "new = min(1, max(0" in controls
-assert "private struct MBGlassLevelProvider: ControlValueProvider" in controls
+assert widget.count("Control()") == 1, "Six old actions must be removed from gallery"
+assert "MBGeneralVolumeControl()" in widget
+assert controls.count(": ControlWidget") == 1
+assert controls.count(": AppIntent") == 1
+assert controls.count("ControlWidgetButton(action:") == 1
+assert controls.count("StaticControlConfiguration(") == 1
+assert controls.count("provider: MBVolumeProvider()") == 1
+assert "MBGeneralVolumeIntent" in controls
+assert "static let openAppWhenRun: Bool = false" in controls
 assert "func currentValue() async throws -> Int" in controls
-assert "return Int((clamped * 4).rounded()) * 25" in controls
-assert "ControlCenter.shared.reloadAllControls()" in controls
-assert controls.count("await MBControlAudio.refreshVisualControls()") == 6
-assert controls.count('image: "MediaBloomGlass\(level)') == 6
-icons = root/"ManzanaExpiryWidget/MediaBloomGlass.xcassets"
-asset_names = [f"MediaBloomGlass{step}{action}" for step in (0,25,50,75,100)
-               for action in ("Plus","Minus","Mute")]
-assert len(asset_names) == 15
-assert len(list(icons.glob("*.imageset"))) == 15
-for name in asset_names:
-    folder = icons/(name+".imageset")
-    assert (folder/"Contents.json").exists(), name
-    assert (folder/"glass.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), name
 
-assert "mute: true" in controls
+# Native SF Symbols are mandatory: raster Label(image:) displayed '?' on iOS.
+assert "Label(" in controls and "systemImage: MBMasterVolume.icon(for: value)" in controls
+assert "image: " not in controls
+for glyph in (
+    "speaker.slash.fill", "speaker.fill", "speaker.wave.1.fill",
+    "speaker.wave.2.fill", "speaker.wave.3.fill"
+):
+    assert glyph in controls, glyph
+assert "case 0:" in controls and "case 25:" in controls
+assert "case 50:" in controls and "case 75:" in controls
+assert "max(0, current - 25)" in controls
+assert "current == 0 ? 100" in controls
+assert 'let masterKey = "MediaBloomMasterGainV1"' in controls
+assert controls.count('defaults.set(slider, forKey:') == 2
+assert '"com.google.ios.youtubemusic"' in controls
+assert '"com.google.ios.youtube"' in controls
+assert '"MediaBloomAudioGainV1." + guest' in controls
+assert "defaults.synchronize()" in controls
+assert "ControlCenter.shared.reloadControls(ofKind:" in controls
+
+# Actual SideStore-provisioned groups can have a Team ID suffix.
+assert "kSecAttrAccessGroup" in controls
+assert "SecItemCopyMatching" in controls and "SecItemAdd" in controls
+assert 'groupBases.map { $0 + "." + id }' in controls
+assert "containerURL(forSecurityApplicationGroupIdentifier:" in controls
+assert "appendingPathComponent(\"Apps\")" in controls
+assert "throw MBControlError.groupUnavailable" in controls
+assert "SecTaskCreateFromSelf" not in controls
+assert "SecTaskCopyValueForEntitlement" not in controls
+
 assert "get-task-allow" not in entitlements
 assert entitlements["com.apple.security.application-groups"] == [
     "group.com.SideStore.SideStore", "group.com.rileytestut.AltStore"
@@ -61,7 +69,7 @@ assert 'MBInstallAudioHooks();' in audio
 assert '[NSUserDefaults.lcSharedDefaults synchronize];' in audio
 for bad in (
     "outputVolume =", "MPVolumeView(", "SystemVolumeDidChangeNotification",
-    "AVAudioSession.sharedInstance().setActive", "UIApplication.shared.open",
+    "AVAudioSession.sharedInstance().setActive", "UIApplication.shared.open"
 ):
     assert bad not in controls, bad
-print("PASS: MediaBloom-owned system controls, authorized App Group, no iOS volume override")
+print("PASS: ONE stateful MediaBloom control with five supported native SF Symbols, matched shared gain keys and signing-aware group lookup")
