@@ -38,6 +38,22 @@ private enum MBControlAudio {
         return UserDefaults(suiteName: selected.0)
     }
 
+    // Five visual states for a small cup filling with water.
+    // Actual gain keeps 10% adjustments; icon snaps to the nearest quarter.
+    static func glassLevel(for bundle: String) -> Int {
+        guard let defaults = sharedDefaults() else { return 100 }
+        let saved = defaults.object(forKey: prefix + bundle) as? NSNumber
+        let raw = saved?.doubleValue ?? 1.0
+        let clamped = raw.isFinite ? min(1, max(0, raw)) : 1.0
+        return Int((clamped * 4).rounded()) * 25
+    }
+
+    @MainActor static func refreshVisualControls() {
+        // iOS re-renders each control with currentValue() from shared defaults.
+        // Reload all six so +, − and mute show the same updated water level.
+        ControlCenter.shared.reloadAllControls()
+    }
+
     static func modify(_ bundle: String, by change: Double = 0, mute: Bool = false) {
         guard let defaults = sharedDefaults() else {
             NSLog("[MediaBloom Controls] No authorized shared App Group for Control Center")
@@ -65,6 +81,20 @@ private enum MBControlAudio {
     }
 }
 
+// The current volume is read whenever iOS renders or refreshes a control.
+// No polling, persistent background task, hardware-button interception, or
+// changes to the system volume are needed.
+@available(iOSApplicationExtension 18.0, *)
+private struct MBGlassLevelProvider: ControlValueProvider {
+    let bundle: String
+
+    var previewValue: Int { 50 }
+
+    func currentValue() async throws -> Int {
+        MBControlAudio.glassLevel(for: bundle)
+    }
+}
+
 // Control Center executes these App Intents even when MediaBloom's interface
 // is not open. Whether the audio changes immediately depends on the guest
 // player still running; suspended players apply the saved gain on resumption.
@@ -73,6 +103,7 @@ struct MBMusicLouderIntent: AppIntent {
     static let title: LocalizedStringResource = "MediaBloom: Música +"
     func perform() async throws -> some IntentResult {
         MBControlAudio.modify(MBControlAudio.music, by: MBControlAudio.gainStep)
+        await MBControlAudio.refreshVisualControls()
         return .result()
     }
 }
@@ -81,6 +112,7 @@ struct MBMusicQuieterIntent: AppIntent {
     static let title: LocalizedStringResource = "MediaBloom: Música −"
     func perform() async throws -> some IntentResult {
         MBControlAudio.modify(MBControlAudio.music, by: -MBControlAudio.gainStep)
+        await MBControlAudio.refreshVisualControls()
         return .result()
     }
 }
@@ -89,6 +121,7 @@ struct MBMusicMuteIntent: AppIntent {
     static let title: LocalizedStringResource = "MediaBloom: Silenciar música"
     func perform() async throws -> some IntentResult {
         MBControlAudio.modify(MBControlAudio.music, mute: true)
+        await MBControlAudio.refreshVisualControls()
         return .result()
     }
 }
@@ -97,6 +130,7 @@ struct MBVideoLouderIntent: AppIntent {
     static let title: LocalizedStringResource = "MediaBloom: Video +"
     func perform() async throws -> some IntentResult {
         MBControlAudio.modify(MBControlAudio.video, by: MBControlAudio.gainStep)
+        await MBControlAudio.refreshVisualControls()
         return .result()
     }
 }
@@ -105,6 +139,7 @@ struct MBVideoQuieterIntent: AppIntent {
     static let title: LocalizedStringResource = "MediaBloom: Video −"
     func perform() async throws -> some IntentResult {
         MBControlAudio.modify(MBControlAudio.video, by: -MBControlAudio.gainStep)
+        await MBControlAudio.refreshVisualControls()
         return .result()
     }
 }
@@ -113,6 +148,7 @@ struct MBVideoMuteIntent: AppIntent {
     static let title: LocalizedStringResource = "MediaBloom: Silenciar video"
     func perform() async throws -> some IntentResult {
         MBControlAudio.modify(MBControlAudio.video, mute: true)
+        await MBControlAudio.refreshVisualControls()
         return .result()
     }
 }
@@ -120,9 +156,12 @@ struct MBVideoMuteIntent: AppIntent {
 @available(iOSApplicationExtension 18.0, *)
 struct MBMusicLouderControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.kdt.bloomboxmedia.music.up") {
+        StaticControlConfiguration(
+            kind: "com.kdt.bloomboxmedia.music.up",
+            provider: MBGlassLevelProvider(bundle: MBControlAudio.music)
+        ) { level in
             ControlWidgetButton(action: MBMusicLouderIntent()) {
-                Label("Música +", systemImage: "speaker.plus.fill")
+                Label("Música + \(level)%", image: "MediaBloomGlass\(level)Plus")
             }
         }
         .displayName("MediaBloom · Música +")
@@ -132,9 +171,12 @@ struct MBMusicLouderControl: ControlWidget {
 @available(iOSApplicationExtension 18.0, *)
 struct MBMusicQuieterControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.kdt.bloomboxmedia.music.down") {
+        StaticControlConfiguration(
+            kind: "com.kdt.bloomboxmedia.music.down",
+            provider: MBGlassLevelProvider(bundle: MBControlAudio.music)
+        ) { level in
             ControlWidgetButton(action: MBMusicQuieterIntent()) {
-                Label("Música −", systemImage: "speaker.minus.fill")
+                Label("Música − \(level)%", image: "MediaBloomGlass\(level)Minus")
             }
         }
         .displayName("MediaBloom · Música −")
@@ -144,9 +186,12 @@ struct MBMusicQuieterControl: ControlWidget {
 @available(iOSApplicationExtension 18.0, *)
 struct MBMusicMuteControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.kdt.bloomboxmedia.music.mute") {
+        StaticControlConfiguration(
+            kind: "com.kdt.bloomboxmedia.music.mute",
+            provider: MBGlassLevelProvider(bundle: MBControlAudio.music)
+        ) { level in
             ControlWidgetButton(action: MBMusicMuteIntent()) {
-                Label("Silenciar música", systemImage: "speaker.slash.fill")
+                Label("Silenciar música \(level)%", image: "MediaBloomGlass\(level)Mute")
             }
         }
         .displayName("MediaBloom · Silenciar música")
@@ -156,9 +201,12 @@ struct MBMusicMuteControl: ControlWidget {
 @available(iOSApplicationExtension 18.0, *)
 struct MBVideoLouderControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.kdt.bloomboxmedia.video.up") {
+        StaticControlConfiguration(
+            kind: "com.kdt.bloomboxmedia.video.up",
+            provider: MBGlassLevelProvider(bundle: MBControlAudio.video)
+        ) { level in
             ControlWidgetButton(action: MBVideoLouderIntent()) {
-                Label("Video +", systemImage: "speaker.plus.fill")
+                Label("Video + \(level)%", image: "MediaBloomGlass\(level)Plus")
             }
         }
         .displayName("MediaBloom · Video +")
@@ -168,9 +216,12 @@ struct MBVideoLouderControl: ControlWidget {
 @available(iOSApplicationExtension 18.0, *)
 struct MBVideoQuieterControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.kdt.bloomboxmedia.video.down") {
+        StaticControlConfiguration(
+            kind: "com.kdt.bloomboxmedia.video.down",
+            provider: MBGlassLevelProvider(bundle: MBControlAudio.video)
+        ) { level in
             ControlWidgetButton(action: MBVideoQuieterIntent()) {
-                Label("Video −", systemImage: "speaker.minus.fill")
+                Label("Video − \(level)%", image: "MediaBloomGlass\(level)Minus")
             }
         }
         .displayName("MediaBloom · Video −")
@@ -180,9 +231,12 @@ struct MBVideoQuieterControl: ControlWidget {
 @available(iOSApplicationExtension 18.0, *)
 struct MBVideoMuteControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.kdt.bloomboxmedia.video.mute") {
+        StaticControlConfiguration(
+            kind: "com.kdt.bloomboxmedia.video.mute",
+            provider: MBGlassLevelProvider(bundle: MBControlAudio.video)
+        ) { level in
             ControlWidgetButton(action: MBVideoMuteIntent()) {
-                Label("Silenciar video", systemImage: "speaker.slash.fill")
+                Label("Silenciar video \(level)%", image: "MediaBloomGlass\(level)Mute")
             }
         }
         .displayName("MediaBloom · Silenciar video")
