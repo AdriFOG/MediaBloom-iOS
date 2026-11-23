@@ -27,6 +27,109 @@ struct MBMusicTrack: Identifiable, Codable, Hashable {
 // Reserve a distinct slot BEFORE suspension. An actor can receive another
 // search while an earlier call is sleeping; updating the timestamp afterward
 // allowed simultaneous queries and transient MusicBrainz 503/429 responses.
+// Real album art cache: 500px downloads are stored inside MediaBloom's own
+// Application Support folder and reused after the app is closed/reopened.
+// Only Cover Art Archive is requested; a 50 MB LRU limit prevents accumulation.
+private actor MBAlbumArtworkCache {
+    static let shared = MBAlbumArtworkCache()
+    private let memory: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.totalCostLimit = 15_000_000
+        return cache
+    }()
+    private var pending: [String: Task<Data?, Never>] = [:]
+    private var misses: [String: Date] = [:]
+    private let maxImageBytes = 4_000_000
+
+    private var folder: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory,
+                                 in: .userDomainMask).first?
+            .appendingPathComponent("MediaBloom/ArtworkCache", isDirectory: true)
+    }
+
+    func bytes(for releaseID: String) async -> Data? {
+        guard UUID(uuidString: releaseID) != nil else { return nil }
+        let key = releaseID.lowercased()
+        if let data = memory.object(forKey: key as NSString) { return data as Data }
+        if let folder {
+            let url = folder.appendingPathComponent(key + ".cover")
+            if let data = try? Data(contentsOf: url),
+               data.count < maxImageBytes, UIImage(data: data) != nil {
+                memory.setObject(data as NSData, forKey: key as NSString, cost: data.count)
+                try? FileManager.default.setAttributes([.modificationDate: Date()],
+                                                       ofItemAtPath: url.path)
+                return data
+            }
+        }
+        if let missed = misses[key], Date().timeIntervalSince(missed) < 6 * 3600 { return nil }
+        if let work = pending[key] { return await work.value }
+        let work = Task { await self.download(key) }
+        pending[key] = work
+        let data = await work.value
+        pending[key] = nil
+        return data
+    }
+
+    private func download(_ key: String) async -> Data? {
+        guard let url = URL(string: "https://coverartarchive.org/release/\(key)/front-500") else { return nil }
+        var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad,
+                                 timeoutInterval: 16)
+        request.setValue("image/jpeg,image/png", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return nil }
+            if http.statusCode == 404 || http.statusCode == 410 {
+                misses[key] = Date()
+                return nil
+            }
+            guard (200..<300).contains(http.statusCode),
+                  !data.isEmpty, data.count <= maxImageBytes,
+                  UIImage(data: data) != nil else { return nil }
+            memory.setObject(data as NSData, forKey: key as NSString, cost: data.count)
+            if let folder {
+                try? FileManager.default.createDirectory(at: folder,
+                    withIntermediateDirectories: true)
+                try? data.write(to: folder.appendingPathComponent(key + ".cover"),
+                                options: .atomic)
+                trim(folder)
+            }
+            return data
+        } catch {
+            // Transient network errors must never poison a previously cached
+            // cover or be persisted as permanent misses.
+            return nil
+        }
+    }
+
+    private func trim(_ folder: URL) {
+        let manager = FileManager.default
+        let urls = (try? manager.contentsOfDirectory(at: folder,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? []
+        let covers = urls.filter { $0.pathExtension == "cover" }
+            .map { url -> (URL, Int, Date) in
+                let props = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                return (url, props?.fileSize ?? 0, props?.contentModificationDate ?? .distantPast)
+            }
+            .sorted { $0.2 < $1.2 }
+        var total = covers.reduce(0) { $0 + $1.1 }
+        var count = covers.count
+        for (url, size, _) in covers where count > 100 || total > 50_000_000 {
+            try? manager.removeItem(at: url)
+            total -= size
+            count -= 1
+        }
+    }
+
+    func prefetch(_ songs: [MBMusicTrack]) async {
+        var seen = Set<String>()
+        for song in songs {
+            guard let id = song.coverReleaseID, seen.insert(id).inserted else { continue }
+            _ = await bytes(for: id)
+            if seen.count >= 6 { break }
+        }
+    }
+}
+
 private actor MBMusicBrainzLimiter {
     static let shared = MBMusicBrainzLimiter()
     private var nextAllowed = Date.distantPast
@@ -67,6 +170,33 @@ actor MBMusicCatalogAPI {
     private let cacheAge: TimeInterval = 12 * 60 * 60
     private var artistSearchCache: [String: [MBMusicArtist]] = [:]
     private var recordingCache: [String: [MBMusicTrack]] = [:]
+    // Persistent combined mix: on cold start we can show saved results
+    // instantly instead of waiting on several per-artist catalog calls.
+    private func favoriteSignature(_ names: [String]) -> String {
+        Array(Set(names.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        })).sorted().joined(separator: "\u{001F}")
+    }
+
+    func savedMix(for names: [String]) -> (songs: [MBMusicTrack], fresh: Bool)? {
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: "MediaBloomMixFavoritesV1") == favoriteSignature(names),
+              let data = defaults.data(forKey: "MediaBloomMixSavedV1"),
+              let result = try? JSONDecoder().decode([MBMusicTrack].self, from: data),
+              !result.isEmpty else { return nil }
+        let age = Date().timeIntervalSince1970 - defaults.double(forKey: "MediaBloomMixSavedAtV1")
+        return (result, age >= 0 && age < cacheAge)
+    }
+
+    func saveMix(_ songs: [MBMusicTrack], for names: [String]) {
+        guard !songs.isEmpty, let encoded = try? JSONEncoder().encode(songs) else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(favoriteSignature(names), forKey: "MediaBloomMixFavoritesV1")
+        defaults.set(encoded, forKey: "MediaBloomMixSavedV1")
+        defaults.set(Date().timeIntervalSince1970, forKey: "MediaBloomMixSavedAtV1")
+    }
+
 
     // Official MusicBrainz MBIDs. These are a SMALL offline fallback for the
     // three onboarding examples, not a fake general artist catalog. They also
