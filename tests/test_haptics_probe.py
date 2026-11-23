@@ -18,6 +18,16 @@ assert "MBHapticsDiagnostic.shared" in appearance
 assert "haptics.beginObservation(english:" in appearance
 assert "haptics.nowPlayingSummary" in appearance
 assert "haptics.playbackSummary" in appearance
+assert "startCapture(english:" in appearance and "stopCapture(english:" in appearance
+assert "recordedEvents.suffix(8)" in appearance
+assert "UIPasteboard.general.string" in appearance
+assert "clearCapture()" in appearance
+assert "Timer(timeInterval: 2.0" in source
+assert "RunLoop.main.add(timer, forMode: .common)" in source
+assert "UserDefaults.standard.set(recordedEvents" in source
+assert "UserDefaults.standard.synchronize()" in source
+assert "Apple Music Haptics ACTIVE" in source
+assert "MPNowPlayingInfoCenter.default().nowPlayingInfo" in source
 assert "MPNowPlayingInfoPropertyInternationalStandardRecordingCode" in ui
 assert "checkHapticTrackAvailabilityForMedia(matchingCode:" in ui
 assert "CHHapticEngine.capabilitiesForHardware().supportsHaptics" in ui
