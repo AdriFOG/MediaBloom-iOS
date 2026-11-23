@@ -42,10 +42,20 @@ def main():
     swift = SWIFT.read_text()
     swift = replace_once(
         swift,
+        "import SwiftUI\n",
+        "import SwiftUI\nimport WidgetKit\n",
+        "Add WidgetKit for MediaBloom controls",
+    )
+    swift = replace_once(
+        swift,
         '    @State private var searchText = ""\n',
         '    @State private var searchText = ""\n'
         '    @AppStorage("MediaBloomAudioProbeEnabledV1", store: LCUtils.appGroupUserDefault)\n'
-        '    private var audioProbeEnabled = false\n',
+        '    private var audioProbeEnabled = false\n'
+        '    @AppStorage("MediaBloomControlTapCountV1", store: LCUtils.appGroupUserDefault)\n'
+        '    private var controlCenterTapCount = 0\n'
+        '    @AppStorage("MediaBloomMasterGainV1", store: LCUtils.appGroupUserDefault)\n'
+        '    private var controlCenterGain = 1.0\n',
         "Media Home enabled switch",
     )
     swift = replace_once(
@@ -65,6 +75,13 @@ def main():
         '                             : "Volumen independiente para YouTube y YouTube Music. Actívalo, vuelve a abrir la app y usa el botón flotante del altavoz mientras reproduce.")\n'
         '                            .font(.caption)\n'
         '                            .foregroundStyle(.secondary)\n'
+        '                        if audioProbeEnabled {\n'
+        '                            Text(english\n'
+        '                                 ? "Control Center: \\(controlCenterTapCount) actions · \\(Int(controlCenterGain * 100))%"\n'
+        '                                 : "Centro de control: \\(controlCenterTapCount) toques · \\(Int(controlCenterGain * 100))%")\n'
+        '                                .font(.caption2.monospacedDigit())\n'
+        '                                .foregroundStyle(.purple.opacity(0.9))\n'
+        '                        }\n'
         '                    }\n'
         '                    .padding(14)\n'
         '                    .background(Color.white.opacity(0.055),\n'
@@ -115,9 +132,9 @@ private struct BloomBoxMediaAudioSlider: View {
             Image(systemName: gain == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
                 .foregroundStyle(.purple)
             Slider(value: $gain, in: 0...1, step: 0.05) { editing in
-                // Persist immediately, not only after drag ends.
-                // A guest timer reads these preferences independently.
-                if !editing { persistVolume() }
+                // Save every move, but only ask iOS to refresh the Control
+                // Center glyph after finishing a drag (no reload storm).
+                if !editing { persistVolume(refreshControl: true) }
             }
             .tint(.purple)
             .onChange(of: gain) { _ in persistVolume() }
@@ -133,9 +150,28 @@ private struct BloomBoxMediaAudioSlider: View {
         .accessibilityLabel(english ? "Experimental app volume" : "Volumen experimental de la app")
     }
 
-    private func persistVolume() {
+    private func persistVolume(refreshControl: Bool = false) {
+        let shared = LCUtils.appGroupUserDefault
+        let value = max(0, min(1, gain))
         let key = "MediaBloomAudioGainV1." + app.bundleIdentifier.lowercased()
-        LCUtils.appGroupUserDefault.set(max(0, min(1, gain)), forKey: key)
+        shared.set(value, forKey: key)
+        // The general Control Center button represents the most recently
+        // changed MediaBloom level, even when edited inside MediaBloom.
+        shared.set(value, forKey: "MediaBloomMasterGainV1")
+        shared.synchronize()
+        if refreshControl { MediaBloomControlCenterSync.notify() }
+    }
+}
+
+// Swift-to-Objective-C bridge, called by BloomAudio's native guest overlay.
+// Explicit @objc runtime name keeps the bridge stable across Swift modules.
+@objc(MediaBloomControlCenterSync)
+final class MediaBloomControlCenterSync: NSObject {
+    @objc static func notify() {
+        if #available(iOS 18.0, *) {
+            ControlCenter.shared.reloadControls(
+                ofKind: "com.kdt.bloomboxmedia.master.volume.v2")
+        }
     }
 }
 '''

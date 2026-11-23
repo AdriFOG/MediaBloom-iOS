@@ -175,6 +175,9 @@ static void MBInstallAudioHooks(void) {
         // Shared defaults may be changed by MediaBloom while a guest is playing.
         // Reapply through original setters, never recursively through hooks.
         [NSTimer scheduledTimerWithTimeInterval:0.3 repeats:YES block:^(NSTimer *timer) {
+            // A Control Center App Intent runs in a DIFFERENT process.
+            // Refresh the shared suite before sampling its new gain value.
+            [NSUserDefaults.lcSharedDefaults synchronize];
             float gain = MBCurrentGain();
             if (fabsf(gain - gMBAudioLastAppliedGain) < 0.001f) return;
             gMBAudioLastAppliedGain = gain;
