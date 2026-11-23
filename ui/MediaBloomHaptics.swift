@@ -70,10 +70,10 @@ final class MBHapticsDiagnostic: ObservableObject {
             // The guest may not register Now Playing, and it would be dishonest
             // to post fake metadata that claims MediaBloom is playing the song.
             let info = MPNowPlayingInfoCenter.default().nowPlayingInfo
-            let title = (info?[MPMediaItemPropertyTitle] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let artist = (info?[MPMediaItemPropertyArtist] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let title = (info?[MPMediaItemPropertyTitle] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let artist = (info?[MPMediaItemPropertyArtist] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             if !title.isEmpty {
                 nowPlayingSummary = artist.isEmpty ? title : "\(title) — \(artist)"
             }
