@@ -43,12 +43,14 @@ def main():
     guest_probe = Path("../media-tools/haptics/MediaBloomGuestNowPlayingProbe.inc").read_text(encoding="utf-8")
     loader = replace_once(
         loader,
-        " __attribute__((constructor))\\nstatic void TweakLoaderConstructor()".replace("\\\\n", "\\n"),
-        "\\n" + guest_probe + "\\n __attribute__((constructor))\\nstatic void TweakLoaderConstructor()".replace("\\\\n", "\\n"),
+        " __attribute__((constructor))\nstatic void TweakLoaderConstructor()",
+        "\n" + guest_probe + "\n __attribute__((constructor))\nstatic void TweakLoaderConstructor()",
         "guest probe TweakLoader constructor",
     )
-    loader = replace_once(loader, "    MBInstallAudioHooks();\\n".replace("\\\\n", "\\n"),
-        "    MBInstallAudioHooks();\\n    MBInstallGuestHapticsProbe();\\n".replace("\\\\n", "\\n"),
+    loader = replace_once(
+        loader,
+        "    MBInstallAudioHooks();\n",
+        "    MBInstallAudioHooks();\n    MBInstallGuestHapticsProbe();\n",
         "opt-in guest probe entry",
     )
     loader_path.write_text(loader, encoding="utf-8")
