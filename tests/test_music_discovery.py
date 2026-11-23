@@ -72,4 +72,24 @@ assert 'MBGlassPanel(tint: theme.white, opacity: glassOpacity' in host
 # Preserve the existing guest link dispatch, favorite selection and volume.
 assert 'runApp(multitask: false, urlStr: link.absoluteString)' in host
 assert 'MediaBloomMasterGainV1' in host
+# Mixed catalog: real popularity first, verified MB releases/recordings for artists
+# with no ListenBrainz totals (common for smaller Spanish/Latin bands).
+assert "private func listenBrainzTracks(_ artist:" in host
+assert "private func musicBrainzReleaseTracks(_ artist:" in host
+assert "private func musicBrainzRecordingTracks(_ artist:" in host
+assert "private func discographyTracks(_ artist:" in host
+assert 'https://musicbrainz.org/ws/2/release/' in host
+assert 'URLQueryItem(name: "artist", value: artist.id)' in host
+assert 'URLQueryItem(name: "status", value: "official")' in host
+assert 'URLQueryItem(name: "inc", value: "recordings+artist-credits")' in host
+assert 'URLQueryItem(name: "inc", value: "artist-credits")' in host
+assert 'credits(recording, include: artist.id) != false' in host
+assert 'if result.count < 4' in host
+assert 'let fallback = try await discographyTracks(artist)' in host
+assert 'if seen.insert(key).inserted { result.append(song) }' in host
+assert '"MediaBloomRecommendedTracksV2." + artist.id' in host
+assert '"MediaBloomTopTracksV1." + artist.id' not in host
+assert 'for position in 0..<12' in host
+assert 'for group in groups where position < group.count' in host
+assert 'coverReleaseID: releaseID' in host
 print('PASS: favorite-only discovery; public sources; honest search fallback; no secrets')
