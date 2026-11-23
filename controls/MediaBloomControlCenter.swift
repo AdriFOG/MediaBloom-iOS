@@ -4,7 +4,7 @@
 //
 // Use Apple's supported SF Symbols (not raster asset images) so the icon
 // displays on iOS 18–27. It changes in five visible volume states.
-// Audio changes are per-guest, NEVER the global iPhone output volume.
+// Adjusts MediaBloom master gain, never iPhone output or a guest override.
 import AppIntents
 import Foundation
 import Security
@@ -15,10 +15,6 @@ import WidgetKit
 private enum MBMasterVolume {
     static let kind = "com.kdt.bloomboxmedia.master.volume.v2"
     static let masterKey = "MediaBloomMasterGainV1"
-    static let guestIDs = [
-        "com.google.ios.youtubemusic",
-        "com.google.ios.youtube"
-    ]
     static let groupBases = [
         "group.com.SideStore.SideStore",
         "group.com.rileytestut.AltStore"
@@ -92,8 +88,6 @@ private enum MBMasterVolume {
     static func currentLevel(defaults: UserDefaults) -> Int {
         defaults.synchronize()
         let current = defaults.object(forKey: masterKey)
-            ?? defaults.object(forKey: "MediaBloomAudioGainV1." + guestIDs[0])
-            ?? defaults.object(forKey: "MediaBloomAudioGainV1." + guestIDs[1])
         let raw = (current as? NSNumber)?.doubleValue ?? 1.0
         let safe = raw.isFinite ? max(0, min(1, raw)) : 1.0
         return Int((safe * 4.0).rounded()) * 25
@@ -119,11 +113,8 @@ private enum MBMasterVolume {
         // to 100%. One control, no additional gallery clutter.
         let next = current == 0 ? 100 : max(0, current - 25)
         let slider = Double(next) / 100.0
-        // Write the EXACT same preferences already used by BloomAudio v0.3.
+        // The general level must never replace each guest's own volume.
         defaults.set(slider, forKey: masterKey)
-        for guest in guestIDs {
-            defaults.set(slider, forKey: "MediaBloomAudioGainV1." + guest)
-        }
         // Diagnostic for physical tests: the host displays this tap counter.
         // If it never increases, the App Intent could not access the App Group.
         defaults.set(defaults.integer(forKey: "MediaBloomControlTapCountV1") + 1,

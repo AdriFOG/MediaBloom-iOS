@@ -21,6 +21,29 @@ struct MediaBloomReferenceView: View {
     @State private var showArtistEditor = false
     @State private var newArtist = ""
     @State private var appPage = 0
+    @State private var showAppearance = false
+    @State private var individualApp: MediaBloomHomeApp?
+    @State private var wallpaperImage: UIImage?
+    @State private var previousMasterVolume = 0.85
+
+    // This is MediaBloom's GENERAL gain. Guest gains remain independent.
+    @AppStorage("MediaBloomMasterGainV1", store: LCUtils.appGroupUserDefault)
+    private var masterVolume = 1.0
+    @AppStorage("MediaBloomAudioProbeEnabledV1", store: LCUtils.appGroupUserDefault)
+    private var audioEnabled = false
+    @AppStorage("MediaBloomAccentHexV1") private var accentHex = "FF896A"
+    @AppStorage("MediaBloomBackgroundHexV1") private var backgroundHex = "0E0F11"
+    @AppStorage("MediaBloomCardHexV1") private var cardHex = "F5F4F1"
+    @AppStorage("MediaBloomMixCardHexV1") private var mixHex = "CBCDC9"
+    @AppStorage("MediaBloomWallpaperEnabledV1") private var wallpaperEnabled = true
+    @AppStorage("MediaBloomWallpaperBlurV1") private var wallpaperBlur = 14.0
+
+    private var theme: MBReferenceTheme {
+        MBReferenceTheme(accent: MBColorHex.color(accentHex),
+                         background: MBColorHex.color(backgroundHex),
+                         white: MBColorHex.color(cardHex),
+                         gray: MBColorHex.color(mixHex))
+    }
 
     private var english: Bool {
         preferredLanguage == "en" || (preferredLanguage == "system" &&
@@ -49,18 +72,33 @@ struct MediaBloomReferenceView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(MBReferenceStyle.background.ignoresSafeArea())
+        .background(wallpaperBackground)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showArtistEditor) { artistEditor }
+        .sheet(isPresented: $showAppearance) {
+            MediaBloomAppearanceSheet(onOpenAdvanced: {
+                showAppearance = false
+                // Avoid opening a second sheet while the first animates.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    model.onOpenSettings()
+                }
+            })
+        }
+        .sheet(item: $individualApp) { app in individualVolumeEditor(app) }
+        .onAppear { wallpaperImage = MBWallpaperStore.load() }
+        .onReceive(NotificationCenter.default.publisher(for: .mediaBloomWallpaperDidChange)) { _ in
+            wallpaperImage = MBWallpaperStore.load()
+        }
         .onChange(of: model.searchText) { _ in appPage = 0 }
         .onChange(of: model.apps.map { $0.id }) { _ in appPage = 0 }
     }
 
     private func portraitLayout(width: CGFloat) -> some View {
         let contentWidth = max(200, width - 24 - 56 - 8)
-        let heroHeight = contentWidth * (668.0 / 604.0)
-        let artistsHeight = max(122, contentWidth * (248.0 / 604.0))
-        let appsHeight = max(252, contentWidth * (508.0 / 604.0))
+        // Move the bottom app card slightly up to clear the Home indicator.
+        let heroHeight = contentWidth * (668.0 / 604.0) - 8
+        let artistsHeight = max(112, contentWidth * (248.0 / 604.0) - 6)
+        let appsHeight = max(228, contentWidth * (508.0 / 604.0) - 20)
         let totalHeight = 40 + heroHeight + artistsHeight + appsHeight + 24
         return ScrollView(.vertical, showsIndicators: false) {
             HStack(alignment: .top, spacing: 8) {
@@ -78,8 +116,8 @@ struct MediaBloomReferenceView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 26)
+            .padding(.top, 6)
+            .padding(.bottom, 38)
         }
     }
 
@@ -101,57 +139,82 @@ struct MediaBloomReferenceView: View {
         .padding(.vertical, 7)
     }
 
-    // MARK: - Shared volume rail
+    // MARK: - General MediaBloom volume (not iPhone's system volume)
+    private var safeMasterVolume: Double { max(0, min(1, masterVolume.isFinite ? masterVolume : 1)) }
+
+    private func setMasterVolume(_ value: Double) {
+        guard audioEnabled else { return }
+        let safe = value.isFinite ? max(0, min(1, value)) : 1
+        if safe > 0.001 { previousMasterVolume = safe }
+        masterVolume = safe
+    }
+
+    private func toggleMasterMute() {
+        if !audioEnabled {
+            audioEnabled = true
+            return // Reopen a guest for new audio hooks to become active.
+        }
+        let next = safeMasterVolume < 0.001 ? max(0.05, previousMasterVolume) : 0
+        setMasterVolume(next)
+        LCUtils.appGroupUserDefault.synchronize()
+        MediaBloomControlCenterSync.notify()
+    }
+
     private func volumeRail(height: CGFloat, width: CGFloat, showName: Bool) -> some View {
-        let current = model.selected
-        let available = current?.volumeAvailable ?? false
-        let level = max(0, min(1, model.muted ? 0 : (current?.volume ?? 0)))
+        let level = safeMasterVolume
         return VStack(spacing: 7) {
-            Button(action: model.toggleMute) {
-                Image(systemName: model.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+            Button(action: toggleMasterMute) {
+                Image(systemName: !audioEnabled ? "speaker.slash.fill" :
+                      level < 0.001 ? "speaker.slash.fill" : "speaker.wave.2.fill")
                     .font(.system(size: 19, weight: .medium))
-                    .foregroundColor(MBReferenceStyle.white)
+                    .foregroundColor(theme.white)
                     .frame(width: width - 10, height: width - 10)
-                    .background(MBReferenceStyle.ink, in: Circle())
+                    .background(theme.ink, in: Circle())
             }
             .buttonStyle(.plain)
-            .disabled(!available)
-            .accessibilityLabel(model.muted ? t("Quitar silencio", "Unmute") : t("Silenciar", "Mute"))
+            .accessibilityLabel(!audioEnabled ? t("Activar BloomAudio", "Enable BloomAudio") :
+                level < 0.001 ? t("Quitar silencio general", "Unmute MediaBloom") :
+                t("Silenciar MediaBloom", "Mute MediaBloom"))
 
             GeometryReader { track in
                 ZStack(alignment: .bottom) {
-                    Capsule().fill(MBReferenceStyle.track)
-                    Capsule().fill(MBReferenceStyle.coral)
+                    Capsule().fill(theme.track)
+                    Capsule().fill(theme.coral)
                         .frame(height: track.size.height * level)
                 }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { drag in
-                        guard available, track.size.height > 0 else { return }
-                        model.setVolume(1 - Double(drag.location.y / track.size.height))
+                        guard audioEnabled, track.size.height > 0 else { return }
+                        setMasterVolume(1 - Double(drag.location.y / track.size.height))
                     }
                     .onEnded { _ in
-                        if available { model.onVolumeCommit() }
+                        if audioEnabled {
+                            LCUtils.appGroupUserDefault.synchronize()
+                            MediaBloomControlCenterSync.notify()
+                        }
                     })
             }
             .frame(width: 30)
+            .opacity(audioEnabled ? 1.0 : 0.5)
             .accessibilityElement()
-            .accessibilityLabel(t("Volumen de ", "Volume for ") + (current?.name ?? "—"))
+            .accessibilityLabel(t("Volumen general de MediaBloom", "MediaBloom master volume"))
             .accessibilityValue("\(Int((level * 100).rounded()))%")
             .accessibilityAdjustableAction { direction in
-                guard available else { return }
-                model.setVolume((current?.volume ?? 0) + (direction == .increment ? 0.05 : -0.05))
-                model.onVolumeCommit()
+                guard audioEnabled else { return }
+                setMasterVolume(level + (direction == .increment ? 0.05 : -0.05))
+                LCUtils.appGroupUserDefault.synchronize()
+                MediaBloomControlCenterSync.notify()
             }
 
             Text("\(Int((level * 100).rounded()))%")
                 .font(.system(size: 14, weight: .bold))
-                .foregroundColor(MBReferenceStyle.ink)
+                .foregroundColor(theme.ink)
                 .minimumScaleFactor(0.8)
             if showName {
-                Text(current?.name ?? "—")
+                Text(audioEnabled ? "MediaBloom" : t("Activar audio", "Enable audio"))
                     .font(.system(size: 9, weight: .regular))
-                    .foregroundColor(MBReferenceStyle.ink)
+                    .foregroundColor(theme.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                     .minimumScaleFactor(0.7)
@@ -161,7 +224,7 @@ struct MediaBloomReferenceView: View {
         .padding(.top, 6)
         .padding(.bottom, 11)
         .frame(width: width, height: height)
-        .background(MBReferenceStyle.white, in: RoundedRectangle(cornerRadius: width / 2, style: .continuous))
+        .background(theme.white, in: RoundedRectangle(cornerRadius: width / 2, style: .continuous))
     }
 
     // MARK: - Search
@@ -169,33 +232,33 @@ struct MediaBloomReferenceView: View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 17, weight: .medium))
-                .foregroundColor(MBReferenceStyle.ink)
+                .foregroundColor(theme.ink)
             TextField("", text: $model.searchText,
                       prompt: Text(t("Buscar música", "Search music"))
-                        .foregroundColor(MBReferenceStyle.ink.opacity(0.38)))
+                        .foregroundColor(theme.ink.opacity(0.38)))
                 .font(.system(size: 14))
-                .foregroundColor(MBReferenceStyle.ink)
+                .foregroundColor(theme.ink)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
                 .onSubmit { model.onSearch(model.searchText) }
             if !model.searchText.isEmpty {
                 Button { model.searchText = "" } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(MBReferenceStyle.ink.opacity(0.5))
+                        .foregroundColor(theme.ink.opacity(0.5))
                 }
                 .buttonStyle(.plain)
             }
-            Button(action: model.onOpenSettings) {
+            Button { showAppearance = true } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(MBReferenceStyle.ink.opacity(0.65))
+                    .foregroundColor(theme.ink.opacity(0.65))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(t("Configuración de MediaBloom", "MediaBloom settings"))
+            .accessibilityLabel(t("Personalizar MediaBloom", "Customize MediaBloom"))
         }
         .padding(.horizontal, 16)
         .frame(height: height)
-        .background(MBReferenceStyle.white, in: Capsule())
+        .background(theme.white, in: Capsule())
     }
 
     // MARK: - Featured mix, original circles
@@ -203,26 +266,26 @@ struct MediaBloomReferenceView: View {
         GeometryReader { size in
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: landscape ? 28 : 29, style: .continuous)
-                    .fill(MBReferenceStyle.gray)
+                    .fill(theme.gray)
                 GeometryReader { g in
                     if landscape {
-                        Circle().fill(MBReferenceStyle.ink)
-                            .frame(width: g.size.height * 0.91, height: g.size.height * 0.91)
-                            .position(x: g.size.width * 0.44, y: g.size.height * 0.37)
-                        Circle().fill(MBReferenceStyle.coral)
-                            .frame(width: g.size.height * 0.39, height: g.size.height * 0.39)
-                            .position(x: g.size.width * 0.55, y: g.size.height * 0.37)
-                        Circle().fill(MBReferenceStyle.white)
-                            .frame(width: g.size.height * 1.33, height: g.size.height * 1.33)
+                        Circle().fill(theme.ink)
+                            .frame(width: g.size.height * 0.79, height: g.size.height * 0.79)
+                            .position(x: g.size.width * 0.62, y: g.size.height * 0.34)
+                        Circle().fill(theme.coral)
+                            .frame(width: g.size.height * 0.32, height: g.size.height * 0.32)
+                            .position(x: g.size.width * 0.71, y: g.size.height * 0.37)
+                        Circle().fill(theme.white)
+                            .frame(width: g.size.height * 1.13, height: g.size.height * 1.13)
                             .position(x: g.size.width * 0.70, y: g.size.height * 1.10)
                     } else {
-                        Circle().fill(MBReferenceStyle.ink)
+                        Circle().fill(theme.ink)
                             .frame(width: g.size.width * 0.50, height: g.size.width * 0.50)
                             .position(x: g.size.width * 0.69, y: g.size.height * 0.31)
-                        Circle().fill(MBReferenceStyle.coral)
+                        Circle().fill(theme.coral)
                             .frame(width: g.size.width * 0.215, height: g.size.width * 0.215)
                             .position(x: g.size.width * 0.83, y: g.size.height * 0.37)
-                        Circle().fill(MBReferenceStyle.white)
+                        Circle().fill(theme.white)
                             .frame(width: g.size.width * 0.99, height: g.size.width * 0.99)
                             .position(x: g.size.width * 0.83, y: g.size.height * 0.90)
                     }
@@ -237,7 +300,7 @@ struct MediaBloomReferenceView: View {
                         .lineSpacing(0)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundColor(MBReferenceStyle.ink)
+                .foregroundColor(theme.ink)
                 .padding(.leading, landscape ? 17 : 16)
                 .padding(.top, landscape ? 16 : 16)
 
@@ -274,20 +337,20 @@ struct MediaBloomReferenceView: View {
             HStack(spacing: 8) {
                 Image(systemName: "play.fill")
                     .font(.system(size: 14))
-                    .foregroundColor(MBReferenceStyle.white)
+                    .foregroundColor(theme.white)
                     .frame(width: 35, height: 35)
-                    .background(MBReferenceStyle.ink, in: Circle())
+                    .background(theme.ink, in: Circle())
                 Text(musicApp.map { t("Abrir en \($0.name)", "Open in \($0.name)") } ??
                      t("Agrega una app de música", "Add a music app"))
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(MBReferenceStyle.ink)
+                    .foregroundColor(theme.ink)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
             .padding(.leading, 5)
             .padding(.trailing, 16)
             .frame(height: 45)
-            .background(MBReferenceStyle.white, in: Capsule())
+            .background(theme.white, in: Capsule())
         }
         .buttonStyle(.plain)
         .disabled(musicApp == nil)
@@ -299,7 +362,7 @@ struct MediaBloomReferenceView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 13)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(MBReferenceStyle.white, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .background(theme.white, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 
     private func artistContent(landscape: Bool) -> some View {
@@ -324,7 +387,7 @@ struct MediaBloomReferenceView: View {
                         .font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .overlay(Capsule().stroke(MBReferenceStyle.ink, lineWidth: 1))
+                        .overlay(Capsule().stroke(theme.ink, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
             } else {
@@ -337,12 +400,12 @@ struct MediaBloomReferenceView: View {
             }
             Spacer(minLength: 0)
             HStack(spacing: 4) {
-                Capsule().fill(MBReferenceStyle.ink).frame(width: 22, height: 2)
-                Capsule().fill(MBReferenceStyle.track).frame(width: 22, height: 2)
-                Capsule().fill(MBReferenceStyle.track).frame(width: 22, height: 2)
+                Capsule().fill(theme.ink).frame(width: 22, height: 2)
+                Capsule().fill(theme.track).frame(width: 22, height: 2)
+                Capsule().fill(theme.track).frame(width: 22, height: 2)
             }
         }
-        .foregroundColor(MBReferenceStyle.ink)
+        .foregroundColor(theme.ink)
     }
 
     private func artistChip(_ artist: String) -> some View {
@@ -350,13 +413,13 @@ struct MediaBloomReferenceView: View {
         return Button { model.toggleArtist(artist) } label: {
             Text(artist)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(active ? MBReferenceStyle.white : MBReferenceStyle.ink)
+                .foregroundColor(active ? theme.white : theme.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
                 .frame(maxWidth: .infinity)
                 .frame(height: 25)
-                .background(active ? MBReferenceStyle.ink : MBReferenceStyle.white, in: Capsule())
-                .overlay(Capsule().stroke(MBReferenceStyle.ink, lineWidth: 1))
+                .background(active ? theme.ink : theme.white, in: Capsule())
+                .overlay(Capsule().stroke(theme.ink, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(active ? .isSelected : [])
@@ -440,18 +503,18 @@ struct MediaBloomReferenceView: View {
                 .frame(maxHeight: .infinity)
                 HStack(spacing: 6) {
                     ForEach(0..<pageCount, id: \.self) { index in
-                        Capsule().fill(index == appPage ? MBReferenceStyle.ink : MBReferenceStyle.track)
+                        Capsule().fill(index == appPage ? theme.ink : theme.track)
                             .frame(width: index == appPage ? 16 : 6, height: 6)
                     }
                 }
                 .padding(.bottom, 1)
             }
         }
-        .foregroundColor(MBReferenceStyle.ink)
+        .foregroundColor(theme.ink)
         .padding(.horizontal, 10)
         .padding(.top, 13)
         .padding(.bottom, 10)
-        .background(MBReferenceStyle.white, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .background(theme.white, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 
     private func appCell(_ app: MediaBloomHomeApp) -> some View {
@@ -463,7 +526,7 @@ struct MediaBloomReferenceView: View {
             } label: {
                 appIcon(app, size: 50)
                     .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous)
-                        .stroke(selected ? MBReferenceStyle.coral : Color.clear, lineWidth: 2)
+                        .stroke(selected ? theme.coral : Color.clear, lineWidth: 2)
                         .padding(-3))
             }
             .buttonStyle(.plain)
@@ -473,18 +536,19 @@ struct MediaBloomReferenceView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .frame(maxWidth: .infinity)
-            Button { model.select(app) } label: {
+            Button { individualApp = app } label: {
                 Text(volumeText(for: app))
                     .font(.system(size: 10))
-                    .foregroundColor(MBReferenceStyle.ink)
+                    .foregroundColor(theme.ink)
                     .padding(.horizontal, 7)
                     .frame(height: 17)
-                    .background(MBReferenceStyle.pill, in: Capsule())
+                    .background(theme.pill, in: Capsule())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(t("Seleccionar volumen de ", "Select volume for ") + app.name)
+            .accessibilityLabel(t("Volumen individual de ", "Individual volume for ") + app.name)
         }
         .frame(maxWidth: .infinity)
+        .contextMenu { appVolumeContextMenu(app) }
     }
 
     private func appIcon(_ app: MediaBloomHomeApp, size: CGFloat) -> some View {
@@ -506,7 +570,7 @@ struct MediaBloomReferenceView: View {
     }
 
     private func volumeText(for app: MediaBloomHomeApp) -> String {
-        guard app.volumeAvailable else { return t("Abrir", "Open") }
+        guard app.volumeAvailable else { return t("No disp.", "N/A") }
         return "\(Int((app.volume * 100).rounded()))%"
     }
 
@@ -532,7 +596,7 @@ struct MediaBloomReferenceView: View {
                             Text(String(format: "%02d", index + 1))
                                 .font(.system(size: 12, weight: .semibold))
                                 .frame(width: 28, height: 21)
-                                .overlay(Capsule().stroke(MBReferenceStyle.ink, lineWidth: 1))
+                                .overlay(Capsule().stroke(theme.ink, lineWidth: 1))
                             Text(app.name)
                                 .font(.system(size: 12, weight: .semibold))
                                 .lineLimit(1)
@@ -542,14 +606,15 @@ struct MediaBloomReferenceView: View {
                                 .font(.system(size: 11))
                                 .lineLimit(1)
                         }
-                        .foregroundColor(MBReferenceStyle.ink)
+                        .foregroundColor(theme.ink)
                         .padding(.horizontal, 11)
                         .frame(maxWidth: .infinity)
                         .frame(height: 69)
-                        .background(index == chosen.count - 1 ? MBReferenceStyle.white : MBReferenceStyle.gray,
+                        .background(index == chosen.count - 1 ? theme.white : theme.gray,
                                     in: RoundedRectangle(cornerRadius: 25, style: .continuous))
                             }
                             .buttonStyle(.plain)
+                            .contextMenu { appVolumeContextMenu(app) }
                         }
                     }
                 }
@@ -563,16 +628,99 @@ struct MediaBloomReferenceView: View {
                 }
                 Text(t("Favorita", "Favorite"))
                     .font(.system(size: 11))
-                    .foregroundColor(MBReferenceStyle.white)
+                    .foregroundColor(theme.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(MBReferenceStyle.ink, in: Capsule())
+                    .background(theme.ink, in: Capsule())
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MBReferenceStyle.white, in: RoundedRectangle(cornerRadius: 27, style: .continuous))
+        .background(theme.white, in: RoundedRectangle(cornerRadius: 27, style: .continuous))
     }
+    // MARK: - Custom wallpaper and per-guest volume
+    private var wallpaperBackground: some View {
+        ZStack {
+            theme.background
+            if wallpaperEnabled, let wallpaper = wallpaperImage {
+                GeometryReader { frame in
+                    Image(uiImage: wallpaper)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: frame.size.width, height: frame.size.height)
+                        .clipped()
+                        .blur(radius: CGFloat(max(0, min(40, wallpaperBlur))), opaque: true)
+                        .overlay(Color.black.opacity(0.10))
+                }
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private func appVolumeContextMenu(_ app: MediaBloomHomeApp) -> some View {
+        Button { individualApp = app } label: {
+            Label(t("Volumen individual", "Individual volume"), systemImage: "slider.horizontal.3")
+        }
+        Button { model.onOpenApp(app.id) } label: {
+            Label(t("Abrir aplicación", "Open app"), systemImage: "play.fill")
+        }
+    }
+
+    private func individualVolumeEditor(_ app: MediaBloomHomeApp) -> some View {
+        let liveVolume = model.apps.first(where: { $0.id == app.id })?.volume ?? app.volume
+        return NavigationView {
+            VStack(spacing: 18) {
+                appIcon(app, size: 66)
+                Text(app.name)
+                    .font(.headline)
+                Text(t("Volumen individual", "Individual volume"))
+                    .font(.title3.weight(.bold))
+                Slider(value: Binding(
+                    get: { model.apps.first(where: { $0.id == app.id })?.volume ?? liveVolume },
+                    set: { value in
+                        guard app.volumeAvailable, audioEnabled else { return }
+                        if let current = model.apps.first(where: { $0.id == app.id }) {
+                            model.select(current)
+                            model.setVolume(value)
+                        }
+                    }), in: 0...1, step: 0.01) { editing in
+                        if !editing {
+                            LCUtils.appGroupUserDefault.synchronize()
+                            model.onVolumeCommit()
+                        }
+                    }
+                    .tint(theme.coral)
+                    .disabled(!app.volumeAvailable || !audioEnabled)
+                Text("\(Int((model.apps.first(where: { $0.id == app.id })?.volume ?? liveVolume) * 100).rounded())%")
+                    .font(.title2.monospacedDigit())
+                Text(t("El volumen general y este ajuste se combinan. No modifican el volumen de iOS.",
+                       "Master and individual volume work together. iOS device volume is unchanged."))
+                    .multilineTextAlignment(.center)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                if !audioEnabled {
+                    Button(t("Activar BloomAudio", "Enable BloomAudio")) { audioEnabled = true }
+                        .buttonStyle(.borderedProminent)
+                } else if !app.volumeAvailable {
+                    Text(t("Esta app aún no es compatible con el control individual.",
+                           "Individual gain is not supported by this app yet."))
+                        .font(.footnote).foregroundColor(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(24)
+            .navigationTitle(t("Audio de app", "App audio"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(t("Listo", "Done")) { individualApp = nil }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+
 }

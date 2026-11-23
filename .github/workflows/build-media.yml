@@ -75,8 +75,14 @@ jobs:
       - name: Verify reference layout, real guest controls and media isolation
         run: python3 ../media-tools/tests/test_reference_ui.py
 
+      - name: Apply wallpaper, theme and independent master-volume controls
+        run: python3 ../media-tools/scripts/apply_media_customization.py
+
+      - name: Verify appearance, audio isolation and app-level volume menu
+        run: python3 ../media-tools/tests/test_media_customization.py
+
       - name: Swift syntax check of responsive UI sources
-        run: xcrun swiftc -frontend -parse ../media-tools/ui/MediaBloomHomeView.swift ../media-tools/ui/MediaBloomHomeBridge.swift ../media-tools/ui/MediaBloomReferenceView.swift
+        run: xcrun swiftc -frontend -parse ../media-tools/ui/MediaBloomHomeView.swift ../media-tools/ui/MediaBloomHomeBridge.swift ../media-tools/ui/MediaBloomReferenceView.swift ../media-tools/ui/MediaBloomAppearance.swift
 
       - name: Install MediaBloom system Control Center actions
         run: python3 ../media-tools/scripts/apply_control_center.py

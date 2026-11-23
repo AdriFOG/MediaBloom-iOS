@@ -13,7 +13,7 @@ assert 'private func artistPanel' in source
 assert 'private func landscapeAppPanel' in source
 assert 'private func appGridPanel' in source
 assert 'private func featuredPanel' in source
-assert 'MBReferenceStyle.coral' in source
+assert 'theme.coral' in source
 assert 'MediaBloomAudioGainV1.' in source
 assert 'model.setVolume(' in source
 assert 'model.onVolumeCommit()' in source
