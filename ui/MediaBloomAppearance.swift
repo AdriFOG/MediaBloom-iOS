@@ -81,6 +81,7 @@ enum MBColorHex {
 
 extension Notification.Name {
     static let mediaBloomWallpaperDidChange = Notification.Name("MediaBloomWallpaperDidChange")
+    static let mediaBloomMediaTagsDidChange = Notification.Name("MediaBloomMediaTagsDidChange")
 }
 
 enum MBWallpaperStore {
@@ -443,5 +444,75 @@ struct MBIndividualAudioSheet: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+}
+
+// Uses EXACTLY the same App Group key and four categories as BloomBox. It can
+// label a newly shared media guest even when automatic recognition lacks its ID.
+// Private apps are never listed, modified, or made launchable.
+struct MBMediaTagEditor: View {
+    let apps: [LCAppModel]
+    let english: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var revision = 0
+
+    private func t(_ es: String, _ en: String) -> String { english ? en : es }
+    private var shared: [LCAppModel] {
+        apps.filter { $0.uiIsShared }
+            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    private func tag(for app: LCAppModel) -> String {
+        _ = revision
+        let key = "BloomBoxMediaTagV1." + app.bundleIdentifier.lowercased()
+        return LCUtils.appGroupUserDefault.string(forKey: key) ?? "auto"
+    }
+
+    private func change(_ value: String, for app: LCAppModel) {
+        guard app.uiIsShared,
+              ["auto", "music", "video", "none"].contains(value) else { return }
+        let shared = LCUtils.appGroupUserDefault
+        let key = "BloomBoxMediaTagV1." + app.bundleIdentifier.lowercased()
+        if value == "auto" { shared.removeObject(forKey: key) }
+        else { shared.set(value, forKey: key) }
+        shared.synchronize()
+        revision += 1
+        NotificationCenter.default.post(name: .mediaBloomMediaTagsDidChange, object: nil)
+    }
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section {
+                    Text(t("Estas etiquetas se comparten con BloomBox. Las apps privadas no se muestran y el catálogo se actualiza al cambiar una etiqueta.",
+                           "Labels sync with BloomBox. Private apps stay hidden and the catalog refreshes when a label changes."))
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+                Section(header: Text(t("Apps compartidas", "Shared apps"))) {
+                    ForEach(shared, id: \.bundleIdentifier) { app in
+                        Picker(app.displayName, selection: Binding(
+                            get: { tag(for: app) },
+                            set: { change($0, for: app) }
+                        )) {
+                            Text(t("Automático", "Automatic")).tag("auto")
+                            Text(t("Música", "Music")).tag("music")
+                            Text("Video").tag("video")
+                            Text(t("Ocultar", "Hide")).tag("none")
+                        }
+                        .pickerStyle(.menu)
+                    }
+                }
+            }
+            .navigationTitle(t("Etiquetas multimedia", "Media labels"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(t("Listo", "Done")) { dismiss() }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+        .preferredColorScheme(.light)
     }
 }
