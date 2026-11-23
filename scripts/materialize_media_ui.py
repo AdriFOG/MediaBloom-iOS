@@ -13,7 +13,7 @@ import zlib
 
 ROOT = Path("../media-tools").resolve()
 ASSET = ROOT / "assets/claude_ui_source.zlib.b64"
-EXPECTED = "d042e3f38f61c6c6f466a064c862ea413db658108f6e6a03ecf0ea4a72b40f0f"
+EXPECTED = "9c7c07256516d9fc78db01538c857ee0e53cb23f41671f4fd59e1fbce14e6dc6"
 FILES = {
     "ui/MediaBloomHomeView.swift",
     "ui/MediaBloomHomeBridge.swift",
