@@ -36,7 +36,7 @@ assert "func currentValue() async throws -> Int" in controls
 assert "return Int((clamped * 4).rounded()) * 25" in controls
 assert "ControlCenter.shared.reloadAllControls()" in controls
 assert controls.count("await MBControlAudio.refreshVisualControls()") == 6
-assert controls.count('image: "MediaBloomGlass\\(level)') == 6
+assert controls.count('image: "MediaBloomGlass\(level)') == 6
 icons = root/"ManzanaExpiryWidget/MediaBloomGlass.xcassets"
 asset_names = [f"MediaBloomGlass{step}{action}" for step in (0,25,50,75,100)
                for action in ("Plus","Minus","Mute")]
@@ -45,7 +45,7 @@ assert len(list(icons.glob("*.imageset"))) == 15
 for name in asset_names:
     folder = icons/(name+".imageset")
     assert (folder/"Contents.json").exists(), name
-    assert (folder/"glass.png").read_bytes().startswith(b"\\x89PNG\\r\\n\\x1a\\n"), name
+    assert (folder/"glass.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), name
 
 assert "mute: true" in controls
 assert "get-task-allow" not in entitlements
