@@ -27,13 +27,13 @@ def main():
                         "MBAlbumArtworkCache"):
         if requirement not in text:
             raise RuntimeError(f"Missing MediaBloom prerequisite: {requirement}")
-    text = replace_once(text, "import SwiftUI\\n",
-                        "import SwiftUI\\nimport CoreHaptics\\nimport MediaAccessibility\\nimport MediaPlayer\\n",
+    text = replace_once(text, "import SwiftUI\n",
+                        "import SwiftUI\nimport CoreHaptics\nimport MediaAccessibility\nimport MediaPlayer\n",
                         "Music Haptics framework imports")
     haptics = SOURCE.read_text(encoding="utf-8")
-    haptics = "\\n".join(line for line in haptics.splitlines()
+    haptics = "\n".join(line for line in haptics.splitlines()
                         if not line.startswith("import "))
-    text += "\\n\\n" + MARK + "\\n" + haptics + "\\n"
+    text += "\n\n" + MARK + "\n" + haptics + "\n"
     HOST.write_text(text, encoding="utf-8")
 
     metadata = plistlib.loads(INFO.read_bytes())
