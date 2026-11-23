@@ -47,7 +47,16 @@ assert "defaults.synchronize()" in controls
 # WidgetKit refreshes button controls after perform() returns, not before.
 assert "ControlCenter.shared.reloadControls(ofKind:" not in controls
 assert "return currentLevel(defaults: try sharedDefaults())" in controls
-assert "try MBMasterVolume.level()" in controls
+assert "MBMasterVolume.level()" in controls
+# Regression: throwing from a ControlValueProvider made both controls blank.
+assert "case -1: return \"exclamationmark.triangle.fill\"" in controls
+assert "return -1" in controls
+assert 'Label(value < 0 ? "MediaBloom · Sin acceso"' in controls
+assert "return currentLevel(defaults: try sharedDefaults())" in controls
+assert "func currentValue() async throws -> Int" in controls
+provider_section = controls.split("private struct MBVolumeProvider: ControlValueProvider", 1)[1].split("struct MBGeneralVolumeIntent:",1)[0]
+assert "try MBMasterVolume.level()" not in provider_section
+assert "throws -> Int" in provider_section
 assert "MediaBloomControlTapCountV1" in controls
 
 # Actual SideStore-provisioned groups can have a Team ID suffix.
