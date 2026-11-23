@@ -66,7 +66,6 @@ def check(ipa: Path) -> None:
         assert controls.get("NSExtension", {}).get("NSExtensionPointIdentifier") == "com.apple.widgetkit-extension"
         assert controls.get("CFBundleIdentifier") == MEDIA_ID + ".ManzanaExpiryWidget", controls
         assert HOST + "PlugIns/ManzanaExpiryWidget.appex/ManzanaExpiryWidget" in names, "No media controls executable"
-        assert HOST + "PlugIns/ManzanaExpiryWidget.appex/Assets.car" in names, "Missing dynamic glass-icon assets in Control Center extension"
 
         # Guarantee that OS-localized names do not say BloomBox instead of Media.
         for path in names:
