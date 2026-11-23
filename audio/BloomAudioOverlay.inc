@@ -8,6 +8,8 @@ static BOOL gMBVolumeExpanded = NO;
 static const CGFloat MBCompactWidth = 52.0f;
 static const CGFloat MBPanelWidth = 292.0f;
 static const CGFloat MBPanelHeight = 124.0f;
+static NSTimeInterval gMBLastControlReloadAt = 0.0;
+
 
 static void MBRepositionVolumeWindow(void);
 static void MBApplyLiveGain(void);
@@ -133,9 +135,26 @@ static void MBApplyLiveGain(void);
     if (normalized > 0.001f) self.previousNonzeroLevel = normalized;
     NSString *key = [@"MediaBloomAudioGainV1." stringByAppendingString:gMBAudioGuest ?: @""];
     [NSUserDefaults.lcSharedDefaults setFloat:normalized forKey:key];
+    // The Control Center icon must also reflect changes from the floating
+    // BloomAudio slider; previously only the App Intent wrote the master key.
+    [NSUserDefaults.lcSharedDefaults setFloat:normalized
+                                       forKey:@"MediaBloomMasterGainV1"];
+    [NSUserDefaults.lcSharedDefaults synchronize];
     [self updateLabels];
-    // Do not require leaving the guest or waiting for the polling timer.
+    // Apply the gain immediately, even while the media guest is running.
     MBApplyLiveGain();
+
+    // The Swift host bridge uses the public WidgetKit ControlCenter API.
+    // Avoid a reload on every slider sample during long drags.
+    NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
+    if (now - gMBLastControlReloadAt > 0.40) {
+        gMBLastControlReloadAt = now;
+        Class controlBridge = NSClassFromString(@"MediaBloomControlCenterSync");
+        SEL refreshSelector = NSSelectorFromString(@"notify");
+        if ([controlBridge respondsToSelector:refreshSelector]) {
+            ((void(*)(id, SEL))objc_msgSend)(controlBridge, refreshSelector);
+        }
+    }
 }
 
 - (void)sliderMoved:(UISlider *)slider {
