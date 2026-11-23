@@ -33,8 +33,8 @@ private enum MBControlAudio {
             }
             return (group, url)
         }
-        let preferred = available.first { _, url in
-            FileManager.default.fileExists(atPath: url.appendingPathComponent("Apps").path)
+        let preferred = available.first { entry in
+            FileManager.default.fileExists(atPath: entry.1.appendingPathComponent("Apps").path)
         } ?? available.first
         guard let selected = preferred else { return nil }
         return UserDefaults(suiteName: selected.0)
