@@ -54,4 +54,22 @@ assert 'model.favoriteArtists.sorted()' in source
 assert 'model.toggleArtist(name)' in source
 assert 'guard !favorites.isEmpty else' in source
 assert 'throw URLError' in source
+# The featured song must fill its card, not remain a tiny 55pt pill.
+assert 'private func fullArtworkCard(' in source
+assert 'coverBackground(track, size: size)' in source
+assert 'fullArtworkCard(track, size: geometry.size)' in source
+assert '.frame(width: size.width, height: size.height)' in source
+assert '.frame(maxWidth: 265)' not in source
+assert 'front-500' in source
+assert 'onOpenSong(track)' in source
+assert 'currentIndex = (currentIndex + 1) % songs.count' in source
+# Every light panel uses the same translucent, adjustable frosted-glass layer.
+assert 'struct MBGlassPanel: View' in host
+assert '.fill(.ultraThinMaterial)' in host
+assert 'MediaBloomGlassOpacityV1' in host
+assert 'glassSection' in host
+assert 'MBGlassPanel(tint: theme.white, opacity: glassOpacity' in host
+# Preserve the existing guest link dispatch, favorite selection and volume.
+assert 'runApp(multitask: false, urlStr: link.absoluteString)' in host
+assert 'MediaBloomMasterGainV1' in host
 print('PASS: favorite-only discovery; public sources; honest search fallback; no secrets')
