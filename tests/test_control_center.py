@@ -38,6 +38,7 @@ assert entitlements["com.apple.security.application-groups"] == [
 assert info["NSExtension"]["NSExtensionPointIdentifier"] == "com.apple.widgetkit-extension"
 assert info["CFBundleDisplayName"] == "MediaBloom Controles"
 assert project.count("CODE_SIGN_ENTITLEMENTS = ManzanaExpiryWidget/MediaBloomControl.entitlements;") == 2
+assert project.count("BDA10000000000000000000D /* ManzanaExpiryWidget.appex in Embed Foundation Extensions */") == 2
 assert project.count("IPHONEOS_DEPLOYMENT_TARGET = 18.0;") >= 2
 assert 'MBInstallAudioHooks();' in audio
 assert '[NSUserDefaults.lcSharedDefaults synchronize];' in audio
