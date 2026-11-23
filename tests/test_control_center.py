@@ -43,10 +43,9 @@ assert "case 50:" in controls and "case 75:" in controls
 assert "max(0, current - 25)" in controls
 assert "current == 0 ? 100" in controls
 assert 'let masterKey = "MediaBloomMasterGainV1"' in controls
-assert controls.count('defaults.set(slider, forKey:') == 2
-assert '"com.google.ios.youtubemusic"' in controls
-assert '"com.google.ios.youtube"' in controls
-assert '"MediaBloomAudioGainV1." + guest' in controls
+assert controls.count('defaults.set(slider, forKey:') == 1
+assert 'for guest in guestIDs' not in controls
+assert 'defaults.set(slider, forKey: masterKey)' in controls
 assert "defaults.synchronize()" in controls
 # WidgetKit refreshes button controls after perform() returns, not before.
 assert "ControlCenter.shared.reloadControls(ofKind:" not in controls

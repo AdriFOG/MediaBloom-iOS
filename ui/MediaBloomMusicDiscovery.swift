@@ -1,0 +1,1091 @@
+import SwiftUI
+import Foundation
+
+// MediaBloom's public, keyless discovery stack. Nothing here plays audio or
+// changes the guest, SideStore or iOS volume. MusicBrainz requests are throttled
+// to one request per second; cached data survives a cold start.
+struct MBMusicArtist: Identifiable, Codable, Hashable {
+    let id: String
+    let name: String
+}
+
+struct MBMusicTrack: Identifiable, Codable, Hashable {
+    let id: String                  // MusicBrainz recording MBID
+    let title: String
+    let artist: String              // Verified favorite-artist display name
+    let artistID: String
+    let album: String
+    let coverReleaseID: String?
+    let listenCount: Int
+
+    var coverURL: URL? {
+        guard let id = coverReleaseID, UUID(uuidString: id) != nil else { return nil }
+        return URL(string: "https://coverartarchive.org/release/\(id)/front-500")
+    }
+}
+
+// Reserve a distinct slot BEFORE suspension. An actor can receive another
+// search while an earlier call is sleeping; updating the timestamp afterward
+// allowed simultaneous queries and transient MusicBrainz 503/429 responses.
+// Real album art cache: 500px downloads are stored inside MediaBloom's own
+// Application Support folder and reused after the app is closed/reopened.
+// Only Cover Art Archive is requested; a 50 MB LRU limit prevents accumulation.
+private actor MBAlbumArtworkCache {
+    static let shared = MBAlbumArtworkCache()
+    private let memory: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.totalCostLimit = 15_000_000
+        return cache
+    }()
+    private var pending: [String: Task<Data?, Never>] = [:]
+    private var misses: [String: Date] = [:]
+    private let maxImageBytes = 4_000_000
+
+    private var folder: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory,
+                                 in: .userDomainMask).first?
+            .appendingPathComponent("MediaBloom/ArtworkCache", isDirectory: true)
+    }
+
+    func bytes(for releaseID: String) async -> Data? {
+        guard UUID(uuidString: releaseID) != nil else { return nil }
+        let key = releaseID.lowercased()
+        if let data = memory.object(forKey: key as NSString) { return data as Data }
+        if let folder {
+            let url = folder.appendingPathComponent(key + ".cover")
+            if let data = try? Data(contentsOf: url),
+               data.count < maxImageBytes, UIImage(data: data) != nil {
+                memory.setObject(data as NSData, forKey: key as NSString, cost: data.count)
+                try? FileManager.default.setAttributes([.modificationDate: Date()],
+                                                       ofItemAtPath: url.path)
+                return data
+            }
+        }
+        if let missed = misses[key], Date().timeIntervalSince(missed) < 6 * 3600 { return nil }
+        if let work = pending[key] { return await work.value }
+        let work = Task { await self.download(key) }
+        pending[key] = work
+        let data = await work.value
+        pending[key] = nil
+        return data
+    }
+
+    private func download(_ key: String) async -> Data? {
+        guard let url = URL(string: "https://coverartarchive.org/release/\(key)/front-500") else { return nil }
+        var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad,
+                                 timeoutInterval: 16)
+        request.setValue("image/jpeg,image/png", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return nil }
+            if http.statusCode == 404 || http.statusCode == 410 {
+                misses[key] = Date()
+                return nil
+            }
+            guard (200..<300).contains(http.statusCode),
+                  !data.isEmpty, data.count <= maxImageBytes,
+                  UIImage(data: data) != nil else { return nil }
+            memory.setObject(data as NSData, forKey: key as NSString, cost: data.count)
+            if let folder {
+                try? FileManager.default.createDirectory(at: folder,
+                    withIntermediateDirectories: true)
+                try? data.write(to: folder.appendingPathComponent(key + ".cover"),
+                                options: .atomic)
+                trim(folder)
+            }
+            return data
+        } catch {
+            // Transient network errors must never poison a previously cached
+            // cover or be persisted as permanent misses.
+            return nil
+        }
+    }
+
+    private func trim(_ folder: URL) {
+        let manager = FileManager.default
+        let urls = (try? manager.contentsOfDirectory(at: folder,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? []
+        let covers = urls.filter { $0.pathExtension == "cover" }
+            .map { url -> (URL, Int, Date) in
+                let props = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                return (url, props?.fileSize ?? 0, props?.contentModificationDate ?? .distantPast)
+            }
+            .sorted { $0.2 < $1.2 }
+        var total = covers.reduce(0) { $0 + $1.1 }
+        var count = covers.count
+        for (url, size, _) in covers where count > 100 || total > 50_000_000 {
+            try? manager.removeItem(at: url)
+            total -= size
+            count -= 1
+        }
+    }
+
+    func prefetch(_ songs: [MBMusicTrack]) async {
+        var seen = Set<String>()
+        for song in songs {
+            guard let id = song.coverReleaseID, seen.insert(id).inserted else { continue }
+            _ = await bytes(for: id)
+            if seen.count >= 6 { break }
+        }
+    }
+}
+
+private actor MBMusicBrainzLimiter {
+    static let shared = MBMusicBrainzLimiter()
+    private var nextAllowed = Date.distantPast
+    func waitForSlot() async {
+        let now = Date()
+        let reserved = max(now, nextAllowed)
+        nextAllowed = reserved.addingTimeInterval(1.25)
+        let delay = max(0, reserved.timeIntervalSince(now))
+        if delay > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
+    }
+}
+
+private enum MBMusicServiceError: LocalizedError {
+    case http(Int)
+
+    var errorDescription: String? {
+        let english = Locale.current.languageCode == "en"
+        switch self {
+        case .http(403):
+            return english ? "Access denied by the music service (HTTP 403)." :
+                "El servicio rechazó la solicitud (HTTP 403)."
+        case .http(let code) where code == 429 || code == 503:
+            return english ? "Music service busy or rate-limited (HTTP \(code)). Please retry." :
+                "Servicio ocupado o limitado (HTTP \(code)). Intenta de nuevo."
+        case .http(let code):
+            return english ? "The music service returned HTTP \(code)." :
+                "El servidor musical respondió HTTP \(code)."
+        }
+    }
+}
+
+actor MBMusicCatalogAPI {
+    static let shared = MBMusicCatalogAPI()
+    private let agent = "MediaBloom-iOS/0.4 (https://github.com/AdriFOG/MediaBloom-iOS)"
+    private let artistIDsKey = "MediaBloomArtistMBIDsV1"
+    private let cacheAge: TimeInterval = 12 * 60 * 60
+    private var artistSearchCache: [String: [MBMusicArtist]] = [:]
+    private var recordingCache: [String: [MBMusicTrack]] = [:]
+    // Persistent combined mix: on cold start we can show saved results
+    // instantly instead of waiting on several per-artist catalog calls.
+    private func favoriteSignature(_ names: [String]) -> String {
+        Array(Set(names.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        })).sorted().joined(separator: "\u{001F}")
+    }
+
+    func savedMix(for names: [String]) -> (songs: [MBMusicTrack], fresh: Bool)? {
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: "MediaBloomMixFavoritesV1") == favoriteSignature(names),
+              let data = defaults.data(forKey: "MediaBloomMixSavedV1"),
+              let result = try? JSONDecoder().decode([MBMusicTrack].self, from: data),
+              !result.isEmpty else { return nil }
+        let age = Date().timeIntervalSince1970 - defaults.double(forKey: "MediaBloomMixSavedAtV1")
+        return (result, age >= 0 && age < cacheAge)
+    }
+
+    func saveMix(_ songs: [MBMusicTrack], for names: [String]) {
+        guard !songs.isEmpty, let encoded = try? JSONEncoder().encode(songs) else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(favoriteSignature(names), forKey: "MediaBloomMixFavoritesV1")
+        defaults.set(encoded, forKey: "MediaBloomMixSavedV1")
+        defaults.set(Date().timeIntervalSince1970, forKey: "MediaBloomMixSavedAtV1")
+    }
+
+
+    // Official MusicBrainz MBIDs. These are a SMALL offline fallback for the
+    // three onboarding examples, not a fake general artist catalog. They also
+    // let preexisting favorites resolve without a network search.
+    nonisolated static func verifiedMatches(_ search: String) -> [MBMusicArtist] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        guard query.count >= 2 else { return [] }
+        let examples: [MBMusicArtist] = [
+            MBMusicArtist(id: "89aa5ecb-59ad-46f5-b3eb-2d424e941f19", name: "Bad Bunny"),
+            MBMusicArtist(id: "c8b03190-306c-4120-bb0b-6f2ebfc06ea9", name: "The Weeknd"),
+            MBMusicArtist(id: "f4abc0b5-3f7a-4eff-8f78-ac078dbce533", name: "Billie Eilish")
+        ]
+        return examples.filter { artist in
+            let normalized = artist.name.lowercased()
+            return normalized.contains(query) ||
+                (normalized == "billie eilish" && query == "billy")
+        }
+    }
+
+    private func fetchJSON(_ url: URL, musicBrainz: Bool = false) async throws -> Any {
+        guard url.scheme == "https", let host = url.host?.lowercased(),
+              ["musicbrainz.org", "api.listenbrainz.org"].contains(host) else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 16)
+        request.setValue(agent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        // One slot for BOTH public APIs. Retry only temporary server/network
+        // errors and honor numeric Retry-After (bounded to protect the UI).
+        for attempt in 0..<3 {
+            await MBMusicBrainzLimiter.shared.waitForSlot()
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
+                }
+                let status = http.statusCode
+                if [429, 502, 503, 504].contains(status) && attempt < 2 {
+                    let suggested = http.value(forHTTPHeaderField: "Retry-After")
+                        .flatMap { Double($0) }
+                    let delay = min(8.0, max(1.5, suggested ?? Double((attempt + 1) * 2)))
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    continue
+                }
+                guard (200..<300).contains(status) else {
+                    throw MBMusicServiceError.http(status)
+                }
+                guard data.count <= 3_000_000 else {
+                    throw URLError(.dataLengthExceedsMaximum)
+                }
+                return try JSONSerialization.jsonObject(with: data)
+            } catch let error as URLError {
+                let transient: [URLError.Code] = [.timedOut, .networkConnectionLost,
+                                                  .cannotConnectToHost, .cannotFindHost]
+                if transient.contains(error.code) && attempt < 2 {
+                    try await Task.sleep(nanoseconds: UInt64((attempt + 1) * 2) * 1_000_000_000)
+                    continue
+                }
+                throw error
+            }
+        }
+        throw URLError(.timedOut)
+    }
+
+    private func validArtist(_ id: String) -> Bool { UUID(uuidString: id) != nil }
+
+    func searchArtists(_ raw: String) async throws -> [MBMusicArtist] {
+        let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 2, query.count <= 70 else { return [] }
+        let key = query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        if let cached = artistSearchCache[key] { return cached }
+        var url = URLComponents(string: "https://musicbrainz.org/ws/2/artist/")!
+        let sanitized = query.replacingOccurrences(of: "\"", with: "")
+        // A regular indexed search supports partial names and aliases; the
+        // quoted exact-field query was too restrictive for onboarding.
+        url.queryItems = [URLQueryItem(name: "query", value: sanitized),
+                          URLQueryItem(name: "fmt", value: "json"),
+                          URLQueryItem(name: "limit", value: "12")]
+        guard let address = url.url else { throw URLError(.badURL) }
+        let json = try await fetchJSON(address, musicBrainz: true)
+        let candidates = (json as? [String: Any])?["artists"] as? [[String: Any]] ?? []
+        var seen = Set<String>()
+        let results: [MBMusicArtist] = candidates.compactMap { item in
+            guard let id = item["id"] as? String, validArtist(id),
+                  let name = item["name"] as? String, !name.isEmpty,
+                  seen.insert(id).inserted else { return nil }
+            return MBMusicArtist(id: id, name: name)
+        }
+        artistSearchCache[key] = results
+        return results
+    }
+
+    func rememberArtist(_ artist: MBMusicArtist) {
+        guard validArtist(artist.id) else { return }
+        var ids = UserDefaults.standard.dictionary(forKey: artistIDsKey) as? [String: String] ?? [:]
+        ids[artist.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)] = artist.id
+        UserDefaults.standard.set(ids, forKey: artistIDsKey)
+    }
+
+    private func resolveArtist(_ name: String) async throws -> MBMusicArtist? {
+        let key = name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let saved = UserDefaults.standard.dictionary(forKey: artistIDsKey) as? [String: String] ?? [:]
+        if let id = saved[key], validArtist(id) { return MBMusicArtist(id: id, name: name) }
+        if let official = Self.verifiedMatches(name).first(where: {
+            $0.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == key
+        }) {
+            rememberArtist(official)
+            return official
+        }
+        let found = try await searchArtists(name)
+        // A similarly-named performer must NEVER become a recommendation.
+        guard let exact = found.first(where: {
+            $0.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == key
+        }) else { return nil }
+        rememberArtist(exact)
+        return exact
+    }
+
+    // ListenBrainz is an optional POPULARITY signal, not the source of truth
+    // for a band's existence. Small/Spanish-language artists often lack listen
+    // counts, while MusicBrainz still knows their actual released recordings.
+    private func listenBrainzTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
+        guard let url = URL(string: "https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/\(artist.id)") else {
+            throw URLError(.badURL)
+        }
+        let json = try await fetchJSON(url)
+        guard let data = json as? [[String: Any]] else { throw URLError(.cannotParseResponse) }
+        var seen = Set<String>()
+        var tracks: [MBMusicTrack] = []
+        for item in data {
+            guard let id = item["recording_mbid"] as? String, UUID(uuidString: id) != nil,
+                  let title = item["recording_name"] as? String,
+                  !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let artistIDs = item["artist_mbids"] as? [String],
+                  artistIDs.contains(artist.id) else { continue }
+            let unique = title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            guard seen.insert(unique).inserted else { continue }
+            let artwork = item["caa_release_mbid"] as? String
+            tracks.append(MBMusicTrack(
+                id: id, title: title, artist: artist.name, artistID: artist.id,
+                album: item["release_name"] as? String ?? "",
+                coverReleaseID: artwork.flatMap { UUID(uuidString: $0) != nil ? $0 : nil },
+                listenCount: item["total_listen_count"] as? Int ?? 0))
+            if tracks.count == 12 { break }
+        }
+        tracks.sort { $0.listenCount > $1.listenCount }
+        return tracks
+    }
+
+    // MusicBrainz returns artist-credit as an array of dictionaries and
+    // join-phrase strings. Only allow recordings belonging to a selected MBID;
+    // never leak another artist from a compilation or a similarly named act.
+    private func credits(_ entity: [String: Any], include artistID: String) -> Bool? {
+        guard let raw = entity["artist-credit"] as? [Any] else { return nil }
+        let ids: [String] = raw.compactMap { item in
+            guard let credit = item as? [String: Any],
+                  let artist = credit["artist"] as? [String: Any] else { return nil }
+            return artist["id"] as? String
+        }
+        return ids.contains(artistID)
+    }
+
+    // Official release tracks give us genuine song IDs and album-cover IDs.
+    // This is catalog discovery, not a claim that those songs are "top hits".
+    private func musicBrainzReleaseTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
+        var parts = URLComponents(string: "https://musicbrainz.org/ws/2/release/")!
+        parts.queryItems = [
+            URLQueryItem(name: "artist", value: artist.id),
+            URLQueryItem(name: "status", value: "official"),
+            URLQueryItem(name: "type", value: "album|ep|single"),
+            URLQueryItem(name: "inc", value: "recordings+artist-credits"),
+            URLQueryItem(name: "limit", value: "16"),
+            URLQueryItem(name: "fmt", value: "json")
+        ]
+        guard let url = parts.url else { throw URLError(.badURL) }
+        let json = try await fetchJSON(url, musicBrainz: true)
+        guard let root = json as? [String: Any],
+              let releases = root["releases"] as? [[String: Any]] else {
+            throw URLError(.cannotParseResponse)
+        }
+        var groups: [[MBMusicTrack]] = []
+        for release in releases {
+            guard let releaseID = release["id"] as? String,
+                  UUID(uuidString: releaseID) != nil else { continue }
+            if credits(release, include: artist.id) == false { continue }
+            let album = release["title"] as? String ?? ""
+            let media = release["media"] as? [[String: Any]] ?? []
+            var group: [MBMusicTrack] = []
+            var withinRelease = Set<String>()
+            for medium in media {
+                let entries = medium["tracks"] as? [[String: Any]] ?? []
+                for entry in entries {
+                    guard let recording = entry["recording"] as? [String: Any],
+                          let id = recording["id"] as? String, UUID(uuidString: id) != nil,
+                          let title = recording["title"] as? String,
+                          !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          credits(recording, include: artist.id) != false else { continue }
+                    let unique = title.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                               locale: .current)
+                    guard withinRelease.insert(unique).inserted else { continue }
+                    group.append(MBMusicTrack(
+                        id: id, title: title, artist: artist.name, artistID: artist.id,
+                        album: album, coverReleaseID: releaseID, listenCount: 0))
+                    if group.count >= 12 { break }
+                }
+                if group.count >= 12 { break }
+            }
+            if !group.isEmpty { groups.append(group) }
+        }
+
+        // Round-robin by release, so smaller bands don't get 12 tracks from
+        // only the first album; every result is still a real credited recording.
+        var tracks: [MBMusicTrack] = []
+        var names = Set<String>()
+        for position in 0..<12 {
+            for group in groups where position < group.count {
+                let song = group[position]
+                let key = song.title.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                             locale: .current)
+                if names.insert(key).inserted { tracks.append(song) }
+                if tracks.count >= 12 { return tracks }
+            }
+        }
+        return tracks
+    }
+
+    // Covers the case of an independently released artist with no official
+    // album metadata yet: the MusicBrainz recordings browser is more complete.
+    private func musicBrainzRecordingTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
+        var parts = URLComponents(string: "https://musicbrainz.org/ws/2/recording/")!
+        parts.queryItems = [
+            URLQueryItem(name: "artist", value: artist.id),
+            URLQueryItem(name: "inc", value: "artist-credits"),
+            URLQueryItem(name: "limit", value: "80"),
+            URLQueryItem(name: "fmt", value: "json")
+        ]
+        guard let url = parts.url else { throw URLError(.badURL) }
+        let json = try await fetchJSON(url, musicBrainz: true)
+        guard let root = json as? [String: Any],
+              let recordings = root["recordings"] as? [[String: Any]] else {
+            throw URLError(.cannotParseResponse)
+        }
+        var tracks: [MBMusicTrack] = []
+        var names = Set<String>()
+        for recording in recordings {
+            guard let id = recording["id"] as? String, UUID(uuidString: id) != nil,
+                  let title = recording["title"] as? String,
+                  !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  credits(recording, include: artist.id) != false else { continue }
+            let key = title.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                    locale: .current)
+            guard names.insert(key).inserted else { continue }
+            tracks.append(MBMusicTrack(
+                id: id, title: title, artist: artist.name, artistID: artist.id,
+                album: "", coverReleaseID: nil, listenCount: 0))
+            if tracks.count >= 12 { break }
+        }
+        return tracks
+    }
+
+    private func discographyTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
+        do {
+            let albums = try await musicBrainzReleaseTracks(artist)
+            if !albums.isEmpty { return albums }
+        } catch {
+            // A release request can fail while an artist's recording browser
+            // still works. Use that public endpoint before giving up.
+        }
+        return try await musicBrainzRecordingTracks(artist)
+    }
+
+    private func topTracks(_ artist: MBMusicArtist) async throws -> [MBMusicTrack] {
+        if let cached = recordingCache[artist.id], !cached.isEmpty { return cached }
+        // V2 cache does not inherit old popularity-only cache, where missing
+        // Latin/Spanish acts were silently excluded.
+        let prefKey = "MediaBloomRecommendedTracksV2." + artist.id
+        let stampKey = prefKey + ".updated"
+        if Date().timeIntervalSince1970 - UserDefaults.standard.double(forKey: stampKey) < cacheAge,
+           let data = UserDefaults.standard.data(forKey: prefKey),
+           let tracks = try? JSONDecoder().decode([MBMusicTrack].self, from: data),
+           !tracks.isEmpty {
+            recordingCache[artist.id] = tracks
+            return tracks
+        }
+
+        var result: [MBMusicTrack] = []
+        var listenError: Error?
+        do {
+            result = try await listenBrainzTracks(artist)
+        } catch {
+            listenError = error
+        }
+        // Fill sparse ListenBrainz results with actual releases/recordings.
+        // Populated artists retain their original popularity ranking.
+        if result.count < 4 {
+            do {
+                let fallback = try await discographyTracks(artist)
+                var seen = Set(result.map {
+                    $0.title.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                     locale: .current)
+                })
+                for song in fallback {
+                    let key = song.title.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                                 locale: .current)
+                    if seen.insert(key).inserted { result.append(song) }
+                    if result.count >= 12 { break }
+                }
+            } catch {
+                if result.isEmpty { throw error }
+            }
+        }
+        if result.isEmpty, let listenError { throw listenError }
+        if !result.isEmpty {
+            recordingCache[artist.id] = result
+            if let saved = try? JSONEncoder().encode(result) {
+                UserDefaults.standard.set(saved, forKey: prefKey)
+                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: stampKey)
+            }
+        }
+        return result
+    }
+
+    func recommendations(for favoriteNames: [String]) async throws -> [MBMusicTrack] {
+        let names = Array(Set(favoriteNames.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        })).filter { !$0.isEmpty }.sorted().prefix(15)
+        var groups: [[MBMusicTrack]] = []
+        var successful = false
+        var lastError: Error?
+        for name in names {
+            do {
+                guard let artist = try await resolveArtist(name) else { continue }
+                groups.append(try await topTracks(artist))
+                successful = true
+            } catch { lastError = error }
+        }
+        if !successful, let lastError { throw lastError }
+        // Interleave favorites instead of letting one massive artist dominate.
+        var result: [MBMusicTrack] = []
+        var seen = Set<String>()
+        for position in 0..<12 {
+            for group in groups where position < group.count {
+                let song = group[position]
+                let key = song.id
+                if seen.insert(key).inserted { result.append(song) }
+                if result.count >= 30 { return result }
+            }
+        }
+        return result
+    }
+
+    func exactSongURL(for song: MBMusicTrack, appID: String) async -> URL? {
+        guard UUID(uuidString: song.id) != nil else { return nil }
+        var parts = URLComponents(string: "https://musicbrainz.org/ws/2/recording/\(song.id)")!
+        parts.queryItems = [URLQueryItem(name: "inc", value: "url-rels"),
+                            URLQueryItem(name: "fmt", value: "json")]
+        guard let url = parts.url,
+              let json = try? await fetchJSON(url, musicBrainz: true) as? [String: Any],
+              let links = json["relations"] as? [[String: Any]] else { return nil }
+        for link in links {
+            guard let metadata = link["url"] as? [String: Any],
+                  let value = metadata["resource"] as? String,
+                  let target = URL(string: value), target.scheme == "https",
+                  let host = target.host?.lowercased() else { continue }
+            let path = target.path.lowercased()
+            let id = appID.lowercased()
+            if id == "com.spotify.client", host == "open.spotify.com", path.hasPrefix("/track/") {
+                return target
+            }
+            if id == "com.google.ios.youtubemusic", host == "music.youtube.com", path == "/watch" {
+                return target
+            }
+            if id == "com.apple.music", host == "music.apple.com", path.contains("/song/") {
+                return target
+            }
+            if id == "com.deezer.deezer", host.hasSuffix("deezer.com"), path.contains("/track/") {
+                return target
+            }
+            if id == "com.google.ios.youtube", (host == "www.youtube.com" || host == "youtube.com"), path == "/watch" {
+                return target
+            }
+        }
+        return nil
+    }
+
+    // If an exact song is not linked from MusicBrainz, open an HONEST search,
+    // never a fabricated song ID or an unrelated video.
+    nonisolated static func searchURL(for song: MBMusicTrack, appID: String) -> URL? {
+        let query = "\(song.artist) \(song.title)"
+        let id = appID.lowercased()
+        if id == "com.spotify.client" {
+            var parts = URLComponents(string: "https://open.spotify.com/search")!
+            parts.path = "/search/" + query
+            return parts.url
+        }
+        let root: String
+        let key: String
+        switch id {
+        case "com.google.ios.youtubemusic": root = "https://music.youtube.com/search"; key = "q"
+        case "com.apple.music": root = "https://music.apple.com/us/search"; key = "term"
+        case "com.deezer.deezer": root = "https://www.deezer.com/search"; key = "q"
+        case "com.google.ios.youtube": root = "https://www.youtube.com/results"; key = "search_query"
+        default: return nil
+        }
+        var parts = URLComponents(string: root)!
+        parts.queryItems = [URLQueryItem(name: key, value: query)]
+        return parts.url
+    }
+}
+
+@MainActor final class MBMusicDiscovery: ObservableObject {
+    @Published private(set) var suggestions: [MBMusicArtist] = []
+    @Published private(set) var searching = false
+    @Published private(set) var searchError: String?
+    @Published private(set) var songs: [MBMusicTrack] = []
+    @Published private(set) var loading = false
+    @Published private(set) var loadError: String?
+    private var searchVersion = 0
+    private var refreshVersion = 0
+
+    func search(_ name: String) {
+        searchVersion += 1
+        let current = searchVersion
+        searching = true
+        searchError = nil
+        // Immediately offer verified matches while the public API is loading.
+        // These are real MBIDs, not invented artist results.
+        suggestions = MBMusicCatalogAPI.verifiedMatches(name)
+        Task {
+            do {
+                let list = try await MBMusicCatalogAPI.shared.searchArtists(name)
+                if current == searchVersion {
+                    let verified = MBMusicCatalogAPI.verifiedMatches(name)
+                    let verifiedIDs = Set(verified.map { $0.id })
+                    suggestions = verified + list.filter { !verifiedIDs.contains($0.id) }
+                }
+            } catch {
+                if current == searchVersion {
+                    // Display real failures (HTTP status or iOS network error).
+                    // Only these three artists have preverified offline MBIDs.
+                    let verified = MBMusicCatalogAPI.verifiedMatches(name)
+                    suggestions = verified
+                    let english = Locale.current.languageCode == "en"
+                    let intro = "MusicBrainz: "
+                    let fallback = verified.isEmpty ? "" :
+                        (english ? " Showing verified artists." : " Mostrando artistas verificados.")
+                    searchError = intro + error.localizedDescription + fallback
+                }
+            }
+            if current == searchVersion { searching = false }
+        }
+    }
+
+    func choose(_ artist: MBMusicArtist, model: MediaBloomHomeModel) {
+        Task { await MBMusicCatalogAPI.shared.rememberArtist(artist) }
+        model.addArtist(artist.name)
+        if !model.favoriteArtists.contains(artist.name) { model.toggleArtist(artist.name) }
+    }
+
+    // Each actual app opening gets a fresh playlist shuffle. Never start with
+    // the same recording as the previous launch when other choices exist.
+    private func present(_ tracks: [MBMusicTrack]) {
+        guard !tracks.isEmpty else { return }
+        var order = tracks.shuffled()
+        let defaults = UserDefaults.standard
+        if order.count > 1,
+           let last = defaults.string(forKey: "MediaBloomLastInitialRecordingV1"),
+           order[0].id == last {
+            order.swapAt(0, Int.random(in: 1..<order.count))
+        }
+        songs = order
+        defaults.set(order[0].id, forKey: "MediaBloomLastInitialRecordingV1")
+        Task { await MBAlbumArtworkCache.shared.prefetch(Array(order.prefix(6))) }
+    }
+
+    func refresh(_ favorites: Set<String>) {
+        refreshVersion += 1
+        let current = refreshVersion
+        songs = []
+        loadError = nil
+        guard !favorites.isEmpty else { loading = false; return }
+        loading = true
+        let names = Array(favorites)
+        Task {
+            let cached = await MBMusicCatalogAPI.shared.savedMix(for: names)
+            guard current == refreshVersion else { return }
+            if let cached {
+                present(cached.songs)
+                loading = false
+                // A fresh combined cache avoids multiple HTTP calls entirely.
+                if cached.fresh { return }
+            }
+            do {
+                let loaded = try await MBMusicCatalogAPI.shared.recommendations(for: names)
+                guard current == refreshVersion else { return }
+                if !loaded.isEmpty {
+                    await MBMusicCatalogAPI.shared.saveMix(loaded, for: names)
+                    if cached == nil { present(loaded) }
+                    // Keep the cached shuffled order in this session; new data
+                    // becomes available on the next start without a visual jump.
+                    else { songs = mergeOldOrder(songs, with: loaded) }
+                } else if songs.isEmpty {
+                    loadError = "No se encontraron canciones de tus artistas favoritos."
+                }
+            } catch {
+                if current == refreshVersion && songs.isEmpty {
+                    loadError = "No se pudo consultar el catálogo. Intenta de nuevo."
+                }
+            }
+            if current == refreshVersion { loading = false }
+        }
+    }
+
+    private func mergeOldOrder(_ current: [MBMusicTrack], with latest: [MBMusicTrack]) -> [MBMusicTrack] {
+        let existing = Set(latest.map(\.id))
+        var result = current.filter { existing.contains($0.id) }
+        let seen = Set(result.map(\.id))
+        result.append(contentsOf: latest.filter { !seen.contains($0.id) }.shuffled())
+        return result
+    }
+}
+
+// Decomposed views to avoid huge SwiftUI type-check expressions in the
+// existing pinned BloomBox host, as discovered in the previous release.
+// A full-bleed hero: the actual recommended album art occupies the entire
+// music card in portrait and landscape. Never invents art or track URLs.
+struct MBMusicRecommendationCard: View {
+    let songs: [MBMusicTrack]
+    let isLoading: Bool
+    let error: String?
+    let hasFavorites: Bool
+    let playerAvailable: Bool
+    let english: Bool
+    let theme: MBReferenceTheme
+    @State private var savedCoverImage: UIImage?
+    @Binding var currentIndex: Int
+    let onOpenSong: (MBMusicTrack) -> Void
+    let onSelectArtists: () -> Void
+    let onRetry: () -> Void
+
+    private var currentSong: MBMusicTrack? {
+        guard !songs.isEmpty else { return nil }
+        return songs[max(0, currentIndex) % songs.count]
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            Group {
+                if let track = currentSong {
+                    fullArtworkCard(track, size: geometry.size)
+                } else {
+                    emptyCard(size: geometry.size)
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipShape(RoundedRectangle(cornerRadius: 29, style: .continuous))
+        }
+        .task(id: currentSong?.coverReleaseID) {
+            let requestedID = currentSong?.coverReleaseID
+            savedCoverImage = nil
+            guard let requestedID,
+                  let bytes = await MBAlbumArtworkCache.shared.bytes(for: requestedID),
+                  !Task.isCancelled,
+                  currentSong?.coverReleaseID == requestedID else { return }
+            savedCoverImage = UIImage(data: bytes)
+        }
+    }
+
+    private func fullArtworkCard(_ track: MBMusicTrack, size: CGSize) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            coverBackground(track, size: size)
+
+            // Text remains readable on very bright or detailed album artwork.
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(0.66), location: 0),
+                    .init(color: .black.opacity(0.08), location: 0.42),
+                    .init(color: .black.opacity(0.84), location: 1)
+                ],
+                startPoint: .top, endPoint: .bottom)
+
+            Button { onOpenSong(track) } label: {
+                albumForeground(track, size: size)
+                    .frame(width: size.width, height: size.height)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!playerAvailable)
+            .accessibilityLabel((english ? "Open " : "Abrir ") +
+                                track.title + " · " + track.artist)
+
+            if songs.count > 1 {
+                Button {
+                    currentIndex = (currentIndex + 1) % songs.count
+                } label: {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.44), in: Circle())
+                        .overlay(Circle().stroke(Color.white.opacity(0.62), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 18)
+                .padding(.bottom, 21)
+                .accessibilityLabel(english ? "Next song" : "Siguiente canción")
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .foregroundColor(.white)
+    }
+
+    private func albumForeground(_ track: MBMusicTrack, size: CGSize) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(english ? "YOUR FAVORITES MIX" : "MIX DE TUS FAVORITOS")
+                .font(.system(size: 13, weight: .bold))
+                .tracking(1.0)
+            Text(english ? "Songs from your favorite artists" :
+                 "Canciones de tus artistas favoritos")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.84))
+                .padding(.top, 5)
+
+            Spacer(minLength: 16)
+
+            if !track.album.isEmpty {
+                Text(track.album.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(0.7)
+                    .lineLimit(1)
+                    .foregroundColor(Color.white.opacity(0.80))
+                    .padding(.bottom, 5)
+            }
+            Text(track.title)
+                .font(.system(size: size.width > 370 ? 29 : 25, weight: .bold))
+                .lineLimit(2)
+                .minimumScaleFactor(0.76)
+                .shadow(color: .black.opacity(0.3), radius: 5)
+
+            Text(track.artist)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.91))
+                .lineLimit(1)
+                .padding(.top, 5)
+
+            HStack(spacing: 10) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(theme.ink)
+                    .frame(width: 48, height: 48)
+                    .background(Color.white, in: Circle())
+                Text(playerAvailable ?
+                     (english ? "OPEN SONG" : "ABRIR CANCIÓN") :
+                     (english ? "NO MUSIC PLAYER" : "SIN REPRODUCTOR"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 16)
+        }
+        .padding(.horizontal, size.width < 340 ? 20 : 24)
+        .padding(.vertical, size.height < 260 ? 16 : 22)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func coverBackground(_ track: MBMusicTrack, size: CGSize) -> some View {
+        if track.coverReleaseID != nil, let savedCoverImage {
+            Image(uiImage: savedCoverImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size.width, height: size.height)
+                .clipped()
+        } else {
+            geometricBackground(size: size)
+        }
+    }
+
+    // Restore MediaBloom's original circles if this album has no cover art.
+    private func geometricBackground(size: CGSize) -> some View {
+        ZStack {
+            theme.gray
+            Circle()
+                .fill(theme.ink)
+                .frame(width: size.width * 0.83, height: size.width * 0.83)
+                .offset(x: size.width * 0.24, y: -size.height * 0.14)
+            Circle()
+                .fill(theme.coral)
+                .frame(width: size.width * 0.36, height: size.width * 0.36)
+                .offset(x: size.width * 0.31, y: -size.height * 0.08)
+            Circle()
+                .fill(theme.white)
+                .frame(width: size.width * 1.10, height: size.width * 1.10)
+                .offset(x: size.width * 0.31, y: size.height * 0.48)
+        }
+        .frame(width: size.width, height: size.height)
+        .clipped()
+    }
+
+    private func emptyCard(size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            geometricBackground(size: size)
+            VStack(alignment: .leading, spacing: 9) {
+                Text(english ? "Your favorites mix" : "Mix de tus favoritos")
+                    .font(.system(size: 14, weight: .medium))
+                Text(english ? "Based on your favorite artists" :
+                     "Basado en tus artistas favoritos")
+                    .font(.system(size: 23, weight: .bold))
+                    .lineLimit(3)
+
+                Spacer(minLength: 18)
+
+                Button(action: hasFavorites ? onRetry : onSelectArtists) {
+                    HStack(spacing: 9) {
+                        if isLoading {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: hasFavorites ? "arrow.clockwise" : "plus.circle.fill")
+                        }
+                        Text(isLoading ?
+                            (english ? "Finding your music…" : "Buscando tu música…") :
+                            !hasFavorites ?
+                            (english ? "Choose favorite artists" : "Elige tus artistas favoritos") :
+                            error != nil ?
+                            (english ? "Retry recommendations" : "Reintentar recomendaciones") :
+                            (english ? "No tracks found yet" : "Aún no hay canciones"))
+                            .lineLimit(2)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 17)
+                    .padding(.vertical, 13)
+                    .background(theme.ink, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isLoading)
+            }
+            .foregroundColor(theme.ink)
+            .padding(24)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+        }
+    }
+}
+
+struct MBMusicArtistPicker: View {
+    @ObservedObject var model: MediaBloomHomeModel
+    @ObservedObject var catalog: MBMusicDiscovery
+    let english: Bool
+    let onboarding: Bool
+    let musicApps: [MediaBloomHomeApp]
+    let onFinish: () -> Void
+    @State private var search = ""
+    @AppStorage("MediaBloomPreferredMusicAppIDV1") private var selectedAppID = ""
+
+    private func t(_ es: String, _ en: String) -> String { english ? en : es }
+    private var favorites: [String] { model.favoriteArtists.sorted() }
+    private var options: [MBMusicArtist] { catalog.suggestions }
+
+    var body: some View {
+        NavigationView {
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 17) {
+                    if onboarding {
+                        HStack(spacing: 12) {
+                            Image(systemName: "heart.circle.fill")
+                                .font(.system(size: 42)).foregroundColor(.orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(t("Tu música comienza aquí", "Your music starts here"))
+                                    .font(.title3.bold())
+                                Text(t("Elige 3 o más artistas. Solo te mostraremos canciones de tus favoritos.",
+                                       "Pick 3 or more artists. Only your favorites will appear."))
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        TextField(t("Busca un artista", "Search an artist"), text: $search)
+                            .textFieldStyle(.roundedBorder)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.words)
+                            .submitLabel(.search)
+                            .onSubmit(submit)
+                        Button(action: submit) { Image(systemName: "magnifyingglass") }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(search.trimmingCharacters(in: .whitespaces).count < 2)
+                    }
+                    if catalog.searching { ProgressView() }
+                    if let error = catalog.searchError {
+                        Text(error).font(.footnote).foregroundColor(.orange)
+                    }
+                    if !options.isEmpty {
+                        Text(catalog.searchError == nil
+                             ? t("Resultados de MusicBrainz", "MusicBrainz results")
+                             : t("Artistas verificados sin conexión", "Verified artists while offline"))
+                            .font(.caption.weight(.semibold))
+                        ForEach(options) { artist in
+                            Button {
+                                catalog.choose(artist, model: model)
+                                search = ""
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "music.mic")
+                                        .foregroundColor(.orange)
+                                        .frame(width: 33, height: 33)
+                                        .background(Color.gray.opacity(0.15), in: Circle())
+                                    Text(artist.name).foregroundColor(.primary)
+                                    Spacer()
+                                    Image(systemName: favorites.contains(artist.name) ? "checkmark.circle.fill" : "plus.circle")
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } else if onboarding {
+                        Text(t("Para empezar, prueba con:", "Try searching for:"))
+                            .font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 7) {
+                            ForEach(["Bad Bunny", "The Weeknd", "Billie Eilish"], id: \.self) { name in
+                                Button(name) { search = name; submit() }
+                                    .font(.caption)
+                                    .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                    if !favorites.isEmpty {
+                        Text(t("TUS ARTISTAS", "YOUR ARTISTS"))
+                            .font(.caption.weight(.semibold))
+                        ForEach(favorites, id: \.self) { name in
+                            HStack(spacing: 9) {
+                                Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                                Text(name)
+                                Spacer()
+                                Button {
+                                    model.toggleArtist(name)
+                                } label: { Image(systemName: "minus.circle") }
+                                .accessibilityLabel(t("Quitar ", "Remove ") + name)
+                            }
+                            .font(.subheadline)
+                        }
+                    }
+                    if !musicApps.isEmpty {
+                        Text(t("REPRODUCTOR PREFERIDO", "PREFERRED PLAYER"))
+                            .font(.caption.weight(.semibold))
+                        Picker(t("Abrir canciones con", "Open songs with"), selection: $selectedAppID) {
+                            ForEach(musicApps) { app in
+                                Text(app.name).tag(app.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        Text(t("Si no existe un enlace directo, abriremos la búsqueda de esa canción.",
+                               "If no exact track link exists, we will open the track search."))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Button {
+                        onFinish()
+                    } label: {
+                        Text(onboarding ? t("Continuar", "Continue") : t("Listo", "Done"))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(onboarding && favorites.count < 3)
+                    if onboarding {
+                        Button(t("Omitir por ahora", "Skip for now"), action: onFinish)
+                            .frame(maxWidth: .infinity)
+                    }
+                    Text(t("Datos: MusicBrainz y ListenBrainz. Portadas: Cover Art Archive.",
+                           "Data: MusicBrainz and ListenBrainz. Art: Cover Art Archive."))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(20)
+            }
+            .navigationTitle(onboarding ? "MediaBloom" : t("Tus artistas", "Your artists"))
+        }
+        .navigationViewStyle(.stack)
+        .onAppear {
+            if selectedAppID.isEmpty || !musicApps.contains(where: { $0.id == selectedAppID }) {
+                selectedAppID = musicApps.first(where: { $0.id.lowercased() == "com.google.ios.youtubemusic" })?.id
+                    ?? musicApps.first?.id ?? ""
+            }
+        }
+    }
+
+    private func submit() {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.count >= 2 { catalog.search(query) }
+    }
+}
