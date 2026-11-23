@@ -15,6 +15,7 @@ from pathlib import Path
 
 TARGET = Path("ManzanaExpiryWidget/MediaBloomGlass.xcassets")
 STEPS = (0, 25, 50, 75, 100)
+ACTIONS = ("Plus", "Minus", "Mute")
 SIZE = 112
 AA = 3
 
@@ -25,7 +26,7 @@ def segment_distance(px, py, ax, ay, bx, by):
     return math.hypot(px-ax-t*vx, py-ay-t*vy)
 
 
-def paint(level: int) -> bytes:
+def paint(level: int, action: str) -> bytes:
     # Premultiplied-ish grayscale with alpha coverage: monochrome line work
     # is adaptable to the system accent color and remains legible at 25 px.
     n = SIZE * AA
@@ -55,10 +56,28 @@ def paint(level: int) -> bytes:
                 surface+=0.7*math.sin((x-24)/9.0)
                 if y>=surface: fill=0.94
             alpha=max(outline*.95,fill*.93)
+            # Distinguish +, − and mute even at small Control Center sizes.
+            # Badge is lower-right, with 5-level fill remaining unobstructed.
+            badgeDistance=math.hypot(x-90.0,y-85.0)
+            badge=badgeDistance<=17.0
+            thick=3.4
+            symbol=False
+            if action in ("Plus","Minus") and abs(y-85.0)<thick and 81.0<x<100.0:
+                symbol=True
+            if action=="Plus" and abs(x-90.0)<thick and 76.0<y<94.0:
+                symbol=True
+            if action=="Mute" and abs((x-90.0)+(y-85.0))<4.0 and 79.0<x<101.0:
+                symbol=True
+            if badge: alpha=max(alpha,0.95)
             if alpha<=0: continue
             off=(iy*n+ix)*4
             # Pale violet, low-noise; iOS may adopt it as a monochrome glyph.
-            val=(232,219,255) if fill>outline else (252,249,255)
+            if badge and symbol:
+                val=(255,255,255)
+            elif badge:
+                val=(93,57,166)
+            else:
+                val=(232,219,255) if fill>outline else (252,249,255)
             rgba[off:off+4]=bytes((*val,round(255*alpha)))
     # Average supersampled subpixels into an RGBA raster.
     out=bytearray(SIZE*SIZE*4)
@@ -90,16 +109,16 @@ def png_rgba(width: int,height: int,pixels: bytes) -> bytes:
 def main() -> None:
     TARGET.mkdir(parents=True,exist_ok=True)
     for level in STEPS:
-        name=f"MediaBloomGlass{level}"
-        folder=TARGET/f"{name}.imageset"
-        folder.mkdir(parents=True,exist_ok=True)
-        (folder/"glass.png").write_bytes(paint(level))
-        (folder/"Contents.json").write_text(json.dumps({
-            "images":[{"filename":"glass.png","idiom":"universal"}],
-            "info":{"author":"xcode","version":1},
-            "properties":{"preserves-vector-representation":False}
-        },indent=2)+"\n")
-    print("PASS five minimal glass fill assets: 0/25/50/75/100")
+        for action in ACTIONS:
+            name=f"MediaBloomGlass{level}{action}"
+            folder=TARGET/f"{name}.imageset"
+            folder.mkdir(parents=True,exist_ok=True)
+            (folder/"glass.png").write_bytes(paint(level,action))
+            (folder/"Contents.json").write_text(json.dumps({
+                "images":[{"filename":"glass.png","idiom":"universal"}],
+                "info":{"author":"xcode","version":1}
+            },indent=2)+"\n")
+    print("PASS five liquid-fill stages × three action badges for MediaBloom")
 
 
 if __name__=="__main__":
