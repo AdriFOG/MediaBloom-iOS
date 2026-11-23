@@ -27,6 +27,22 @@ assert "RunLoop.main.add(timer, forMode: .common)" in source
 assert "UserDefaults.standard.set(recordedEvents" in source
 assert "UserDefaults.standard.synchronize()" in source
 assert "Apple Music Haptics ACTIVE" in source
+guest_probe = Path("../media-tools/haptics/MediaBloomGuestNowPlayingProbe.inc").read_text()
+assert "MBInstallGuestHapticsProbe();" in ui or "MBInstallGuestHapticsProbe();" in Path("TweakLoader/TweakLoader.m").read_text()
+loader = Path("TweakLoader/TweakLoader.m").read_text()
+assert 'com.google.ios.youtubemusic' in guest_probe
+assert 'MBIsMediaHost()' in guest_probe
+assert 'MediaBloomHapticsGuestCaptureV1' in guest_probe
+assert 'MediaBloomHapticsGuestEventsV1' in guest_probe
+assert 'MediaBloomHapticsGuestSamplesV1' in guest_probe
+assert 'MPNowPlayingInfoCenter' in guest_probe
+assert 'MBInstallGuestHapticsProbe();' in loader
+assert 'LCUtils.appGroupUserDefault.set(false, forKey: guestEnabledKey)' in source
+assert 'shared.set(true, forKey: guestEnabledKey)' in source
+assert 'haptics.guestSamples' in appearance
+assert 'haptics.guestEvents.suffix(12)' in appearance
+for forbidden in ('setNowPlayingInfo:', 'AVAudioEngine', 'AVAudioRecorder', 'requestRecordPermission'):
+    assert forbidden not in guest_probe
 assert "MPNowPlayingInfoCenter.default().nowPlayingInfo" in source
 assert "MPNowPlayingInfoPropertyInternationalStandardRecordingCode" in ui
 assert "checkHapticTrackAvailabilityForMedia(matchingCode:" in ui
