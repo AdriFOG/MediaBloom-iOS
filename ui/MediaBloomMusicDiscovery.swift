@@ -519,13 +519,6 @@ struct MBMusicArtistPicker: View {
                 .padding(20)
             }
             .navigationTitle(onboarding ? "MediaBloom" : t("Tus artistas", "Your artists"))
-            .toolbar {
-                if !onboarding {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button(t("Cerrar", "Close"), action: onFinish)
-                    }
-                }
-            }
         }
         .navigationViewStyle(.stack)
         .onAppear {
