@@ -87,9 +87,9 @@ private enum MBMasterVolume {
         return Int((safe * 4.0).rounded()) * 25
     }
 
-    static func level() -> Int {
-        guard let shared = try? sharedDefaults() else { return 100 }
-        return currentLevel(defaults: shared)
+    static func level() throws -> Int {
+        // If signing prevents access, don't silently display 100% forever.
+        return currentLevel(defaults: try sharedDefaults())
     }
 
     static func cycle() throws -> Int {
@@ -134,7 +134,7 @@ private enum MBControlError: Error, LocalizedError {
 private struct MBVolumeProvider: ControlValueProvider {
     let previewValue: Int = 75
     func currentValue() async throws -> Int {
-        MBMasterVolume.level()
+        try MBMasterVolume.level()
     }
 }
 
@@ -146,9 +146,8 @@ struct MBGeneralVolumeIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         _ = try MBMasterVolume.cycle()
-        await MainActor.run {
-            ControlCenter.shared.reloadControls(ofKind: MBMasterVolume.kind)
-        }
+        // WidgetKit reloads this control AFTER the AppIntent returns.
+        // A premature manual reload here can fetch the old cached state.
         return .result()
     }
 }
