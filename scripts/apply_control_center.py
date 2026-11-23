@@ -76,6 +76,12 @@ struct MediaBloomControlBundle: WidgetBundle {
     anchor2 = "IPHONEOS_DEPLOYMENT_TARGET = 16.2;"
     assert project.count(anchor2) == 2, "Expected two widget deployment settings"
     project = project.replace(anchor2, "IPHONEOS_DEPLOYMENT_TARGET = 18.0;")
+    # The original BloomBox target declares the widget but does not embed it
+    # into the application. Without this copy phase, the IPA installs normally
+    # yet *no* MediaBloom controls appear in iOS Control Center.
+    widget_embed = "E1292AF32DCA3A660065E12D /* LiveProcess.appex in Embed Foundation Extensions */,"
+    assert project.count(widget_embed) == 1
+    project = project.replace(widget_embed, widget_embed + "\\n                BDA10000000000000000000D /* ManzanaExpiryWidget.appex in Embed Foundation Extensions */,")
     PBX.write_text(project)
 
     # Discoverable instructions in MediaBloom itself. These buttons belong to
