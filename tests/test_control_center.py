@@ -21,8 +21,9 @@ assert controls.count("ControlWidgetButton(action:") == 6
 assert controls.count("StaticControlConfiguration(kind:") == 6
 for key in (
     "com.google.ios.youtubemusic", "com.google.ios.youtube",
-    "MediaBloomAudioGainV1.", "SecTaskCopyValueForEntitlement",
-    "com.apple.security.application-groups", "containerURL(forSecurityApplicationGroupIdentifier:",
+    "MediaBloomAudioGainV1.",
+    "group.com.SideStore.SideStore", "group.com.rileytestut.AltStore",
+    "containerURL(forSecurityApplicationGroupIdentifier:",
     "UserDefaults(suiteName:", "defaults.synchronize()",
     "MBMusicLouderControl", "MBMusicQuieterControl", "MBMusicMuteControl",
     "MBVideoLouderControl", "MBVideoQuieterControl", "MBVideoMuteControl",
