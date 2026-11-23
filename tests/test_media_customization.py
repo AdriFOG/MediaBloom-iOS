@@ -61,5 +61,5 @@ assert "shape.fill(tint.opacity(amount * 0.22))" in host
 assert 'tint.opacity(max(0.48, min(0.96, opacity)))' not in host
 assert 'MediaBloomGlassOpacityV1' in host
 assert 'private var glassSection: some View' in host
-assert 'MBGlassPanel(tint: theme.white, opacity: glassOpacity' in host
+assert 'MBGlassPanel(tint: glassColor, opacity: glassOpacity' in host
 print('PASS: portrait/landscape polish, wallpaper, colors, independent master + guest gain')
