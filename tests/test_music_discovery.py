@@ -29,7 +29,15 @@ assert 'https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/' in
 assert 'https://coverartarchive.org/release/' in host
 assert 'musicbrainz.org", "api.listenbrainz.org' in host
 assert 'await MBMusicBrainzLimiter.shared.waitForSlot()' in host
-assert 'max(0, 1.15 - Date().timeIntervalSince(lastStarted))' in host
+assert 'nextAllowed = reserved.addingTimeInterval(1.25)' in host
+assert 'MBMusicServiceError.http(status)' in host
+assert 'Retry-After' in host
+assert 'searchError = intro + error.localizedDescription + fallback' in host
+assert 'MBMusicCatalogAPI.verifiedMatches(name)' in host
+assert 'suggestions = MBMusicCatalogAPI.verifiedMatches(name)' in host
+assert 'f4abc0b5-3f7a-4eff-8f78-ac078dbce533' in host
+assert 'url.queryItems = [URLQueryItem(name: "query", value: sanitized)' in host
+assert 'max(0, reserved.timeIntervalSince(now))' in host
 assert 'User-Agent' in host
 assert 'cacheAge: TimeInterval = 12 * 60 * 60' in host
 assert 'MBMusicCatalogAPI.searchURL' in host
