@@ -33,6 +33,17 @@ def main():
         dest = (ROOT / name).resolve()
         if not dest.is_relative_to(ROOT) or dest.exists() or not isinstance(source, str):
             raise RuntimeError(f"Unsafe or duplicate UI source: {name}")
+        # The original design used .scrollIndicators(.hidden), an iOS 16
+        # API. The pinned launcher also builds for older iOS versions.
+        # Apply the compatible ScrollView initializer after SHA verification.
+        if name == "ui/MediaBloomHomeView.swift":
+            old = "ScrollView {"
+            marker = "        .scrollIndicators(.hidden)\\n"
+            if source.count(old) != 1 or source.count(marker) != 1:
+                raise RuntimeError("Unexpected UI scroll source; review before patching")
+            source = source.replace(
+                old, "ScrollView(.vertical, showsIndicators: false) {", 1
+            ).replace(marker, "", 1)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(source, encoding="utf-8")
     print("PASS: materialized 4 reviewed MediaBloom UI sources (SHA256 verified)")
