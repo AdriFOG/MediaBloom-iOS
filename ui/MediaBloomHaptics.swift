@@ -93,6 +93,7 @@ final class MBHapticsDiagnostic: ObservableObject {
 
     private func captureNowPlaying(english: Bool) {
         guard captureActive else { return }
+        guard #available(iOS 18.0, *) else { return }
         // Observe only local Now Playing metadata. Guest metadata may not be
         // accessible; an empty result is not proof no song is playing.
         let info = MPNowPlayingInfoCenter.default().nowPlayingInfo
@@ -120,7 +121,7 @@ final class MBHapticsDiagnostic: ObservableObject {
                 saveEvent("Now Playing: \(name) | ISRC: \(isrc.isEmpty ? "missing" : isrc)")
             }
         }
-        guard !isrc.isEmpty, isrc != lastCatalogCheck, #available(iOS 18.0, *) else { return }
+        guard !isrc.isEmpty, isrc != lastCatalogCheck else { return }
         lastCatalogCheck = isrc
         MAMusicHapticsManager.shared.checkHapticTrackAvailabilityForMedia(matchingCode: isrc) { [weak self] available in
             Task { @MainActor [weak self] in
