@@ -55,7 +55,9 @@ assert 'AVAudioSession.sharedInstance().outputVolume' not in host
 assert 'struct MBGlassPanel: View' in host
 assert '.fill(.ultraThinMaterial)' in host
 assert r'.environment(\.colorScheme, .light)' in host
-assert 'let colorWash = 0.035 + 0.24 * strength' in host
+assert "let amount = max(0, min(1, opacity))" in host
+assert "if amount > 0.001" in host
+assert "shape.fill(tint.opacity(amount * 0.22))" in host
 assert 'tint.opacity(max(0.48, min(0.96, opacity)))' not in host
 assert 'MediaBloomGlassOpacityV1' in host
 assert 'private var glassSection: some View' in host
