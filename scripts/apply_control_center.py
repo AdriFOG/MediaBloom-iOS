@@ -73,9 +73,9 @@ struct MediaBloomControlBundle: WidgetBundle {
     # Controls are available on iOS 18+. MediaBloom's host can still target
     # earlier iOS versions; the system simply won't expose this extension.
     # The widget deployment target is the ONLY version changed.
-    anchor2 = "  IPHONEOS_DEPLOYMENT_TARGET = 16.2;"
+    anchor2 = "IPHONEOS_DEPLOYMENT_TARGET = 16.2;"
     assert project.count(anchor2) == 2, "Expected two widget deployment settings"
-    project = project.replace(anchor2, "  IPHONEOS_DEPLOYMENT_TARGET = 18.0;")
+    project = project.replace(anchor2, "IPHONEOS_DEPLOYMENT_TARGET = 18.0;")
     PBX.write_text(project)
     print("PASS: standalone MediaBloom Control Center widget target + shared App Groups")
 
