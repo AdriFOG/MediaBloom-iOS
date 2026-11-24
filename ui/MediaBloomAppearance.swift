@@ -184,6 +184,8 @@ struct MediaBloomAppearanceSheet: View {
     @StateObject private var haptics = MBHapticsDiagnostic.shared
     @AppStorage("MediaBloomHapticsAutoISRCV1", store: LCUtils.appGroupUserDefault)
     private var automaticMusicHaptics = false
+    @AppStorage("MediaBloomHapticsGuestOverlayV1", store: LCUtils.appGroupUserDefault)
+    private var showHapticsInPlayer = true
 
     private var english: Bool {
         language == "en" || (language == "system" &&
@@ -384,6 +386,15 @@ struct MediaBloomAppearanceSheet: View {
                         "Try automatic Apple Music Haptics"), systemImage: "waveform")
             }
             .disabled(!haptics.hardwareAvailable)
+            Toggle(isOn: $showHapticsInPlayer) {
+                Label(t("Mostrar estado en el reproductor",
+                        "Show haptic status inside player"), systemImage: "waveform.path")
+            }
+            .disabled(!haptics.hardwareAvailable)
+            Text(t("En YouTube Music aparecerá una barra pequeña con el estado de carga y un botón ↻ para resincronizar sin detener la canción. Apple no muestra un porcentaje de descarga háptica.",
+                   "YouTube Music shows a compact loading indicator and ↻ button to retry synchronization without stopping the song. Apple does not expose haptic download progress."))
+                .font(.caption)
+                .foregroundColor(.secondary)
             Text(t("Experimental: busca la grabación exacta con MusicBrainz y solo añade su ISRC cuando Apple confirma una pista háptica. Activa también el registro y vuelve a abrir YouTube Music.",
                    "Experimental: looks up the exact recording in MusicBrainz and adds its ISRC only when Apple reports a haptic track. Also start capture and reopen YouTube Music."))
                 .font(.caption)
