@@ -24,6 +24,7 @@ static BOOL MBMHEnabled(void) {
 }
 
 static NSString *MBMHNormalized(NSString *value) {
+    if (![value isKindOfClass:NSString.class]) return @"";
     NSString *folded = [[value ?: @"" stringByFoldingWithOptions:
         NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch
         locale:NSLocale.currentLocale] lowercaseString];
@@ -91,7 +92,7 @@ static NSDictionary *MBMHNowPlayingInfo(void) {
 }
 
 static id MBMHManager(void) {
-    if (!@available(iOS 18.0, *)) return nil;
+    if (@available(iOS 18.0, *)) { /* supported */ } else { return nil; }
     dlopen("/System/Library/Frameworks/MediaAccessibility.framework/MediaAccessibility",
            RTLD_LAZY | RTLD_GLOBAL);
     Class cls = NSClassFromString(@"MAMusicHapticsManager");
@@ -109,7 +110,7 @@ static BOOL MBMHSystemEnabled(void) {
 }
 
 static void MBMHStartGuestObserver(void) {
-    if (!@available(iOS 18.0, *)) return;
+    if (@available(iOS 18.0, *)) { /* supported */ } else { return; }
     if (gMBMHObserverToken) return;
     id manager = MBMHManager();
     SEL sel = NSSelectorFromString(@"addStatusObserver:");
@@ -165,7 +166,7 @@ static void MBMHRequestJSON(NSURL *url, void (^completion)(NSDictionary *)) {
 }
 
 static void MBMHApplyVerifiedISRC(NSString *code, NSString *signature) {
-    if (!@available(iOS 18.0, *)) return;
+    if (@available(iOS 18.0, *)) { /* supported */ } else { return; }
     if (!MBMHStillCurrent(signature) || !MBMHSystemEnabled()) return;
     NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
     if (now - gMBMHLastWriteAt < 12.0) return;
@@ -343,7 +344,8 @@ static void MBMHSearchRecording(NSString *title, NSString *artist,
 
 static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
                                  NSString *artist, NSString *existingISRC) {
-    if (!MBMHEnabled() || !@available(iOS 18.0, *)) return;
+    if (!MBMHEnabled()) return;
+    if (@available(iOS 18.0, *)) { /* supported */ } else { return; }
     if (!title.length || !artist.length) return;
     if (title.length > 150 || artist.length > 150) return;
     NSString *signature = MBMHSignature(title, artist, info);
