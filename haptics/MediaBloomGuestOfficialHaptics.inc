@@ -6,9 +6,15 @@
 #import <objc/message.h>
 #include <dlfcn.h>
 #include <math.h>
+#include <float.h>
 
 static NSString * const kMBMHEnabledKey = @"MediaBloomHapticsAutoISRCV1";
 static NSString * const kMBMHCacheKey = @"MediaBloomHapticsVerifiedISRCV1";
+static NSString * const kMBMHRejectedCodesKey = @"MediaBloomHapticsRejectedISRCV1";
+static NSString * const kMBMHStatusKey = @"MediaBloomHapticsStatusV1";
+static NSString * const kMBMHStatusDetailKey = @"MediaBloomHapticsStatusDetailV1";
+static NSString * const kMBMHStatusSongKey = @"MediaBloomHapticsStatusSongV1";
+static NSString * const kMBMHStatusDateKey = @"MediaBloomHapticsStatusDateV1";
 static NSString *gMBMHSongSignature = nil;
 static NSString *gMBMHVerifiedISRC = nil;
 static NSTimeInterval gMBMHLastWriteAt = 0;
@@ -29,6 +35,64 @@ static BOOL MBMHEnabled(void) {
     [shared synchronize];
     return [shared boolForKey:kMBGuestProbeEnabled] &&
            [shared boolForKey:kMBMHEnabledKey];
+}
+
+// Shared, persistent *last observed* status; the user closes the guest to
+// return to MediaBloom. Do not label old samples as "currently playing".
+static void MBMHSetStatus(NSString *state, NSString *detail, NSString *signature) {
+    if (signature.length && ![signature isEqualToString:gMBMHSongSignature]) return;
+    NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
+    NSString *song = gMBMHCurrentTitle.length ? gMBMHCurrentTitle : @"";
+    NSString *actualState = state ?: @"unknown";
+    NSString *actualDetail = detail ?: @"";
+    if ([[shared stringForKey:kMBMHStatusKey] isEqualToString:actualState] &&
+        [[shared stringForKey:kMBMHStatusDetailKey] isEqualToString:actualDetail] &&
+        [[shared stringForKey:kMBMHStatusSongKey] isEqualToString:song]) return;
+    [shared setObject:actualState forKey:kMBMHStatusKey];
+    [shared setObject:actualDetail forKey:kMBMHStatusDetailKey];
+    [shared setObject:song forKey:kMBMHStatusSongKey];
+    [shared setObject:NSDate.date forKey:kMBMHStatusDateKey];
+    [shared synchronize];
+}
+
+// The Apple catalog can change. A rejection is temporary (12 hours), scoped
+// strictly to a real ISRC, and never means all versions of a song are rejected.
+static BOOL MBMHIsRejectedISRC(NSString *code) {
+    if (!code.length) return NO;
+    NSDictionary *all = [NSUserDefaults.lcSharedDefaults
+        dictionaryForKey:kMBMHRejectedCodesKey] ?: @{};
+    id timestamp = all[code.uppercaseString];
+    if (![timestamp respondsToSelector:@selector(doubleValue)]) return NO;
+    NSTimeInterval age = NSDate.timeIntervalSinceReferenceDate -
+                         [timestamp doubleValue];
+    return age >= 0 && age < (12.0 * 3600.0);
+}
+
+static void MBMHRememberRejectedISRC(NSString *code) {
+    if (!code.length) return;
+    NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
+    NSMutableDictionary *all = [[shared dictionaryForKey:kMBMHRejectedCodesKey]
+                                 ?: @{} mutableCopy];
+    NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
+    for (NSString *item in [all.allKeys copy]) {
+        id date = all[item];
+        if (![date respondsToSelector:@selector(doubleValue)] ||
+            now - [date doubleValue] >= 12.0 * 3600.0) {
+            [all removeObjectForKey:item];
+        }
+    }
+    if (all.count >= 120 && !all[code.uppercaseString]) {
+        NSString *oldest = nil;
+        NSTimeInterval oldestTime = DBL_MAX;
+        for (NSString *item in all) {
+            NSTimeInterval time = [all[item] doubleValue];
+            if (time < oldestTime) { oldestTime = time; oldest = item; }
+        }
+        if (oldest) [all removeObjectForKey:oldest];
+    }
+    all[code.uppercaseString] = @(now);
+    [shared setObject:all forKey:kMBMHRejectedCodesKey];
+    [shared synchronize];
 }
 
 static NSString *MBMHNormalized(NSString *value) {
@@ -139,6 +203,13 @@ static void MBMHStartGuestObserver(void) {
             MBGuestAppendHapticEvent(playing ?
                 [NSString stringWithFormat:@"Apple Music Haptics PLAYING — %@", code ?: @"?"] :
                 [NSString stringWithFormat:@"Apple Music Haptics STOPPED — %@", code ?: @"?"]);
+            // Only attribute playback to the current matching recording.
+            if (gMBMHVerifiedISRC.length && [code isEqualToString:gMBMHVerifiedISRC]) {
+                MBMHSetStatus(playing ? @"playing" : @"ready",
+                             playing ? @"iOS confirmed synchronized playback" :
+                                       @"Apple playback stopped; track is compatible",
+                             gMBMHSongSignature);
+            }
         });
     };
     gMBMHObserverToken = ((id (*)(id, SEL, id))objc_msgSend)(manager, sel, callback);
@@ -282,28 +353,44 @@ static void MBMHCheckISRCs(NSArray<NSString *> *codes, NSUInteger index,
     if (!MBMHStillCurrent(signature)) return;
     if (index >= codes.count) {
         MBGuestAppendHapticEvent(@"Apple has no confirmed haptic track for matched ISRCs");
+        MBMHSetStatus(@"unavailable", @"No Apple haptic track confirmed for matched ISRCs",
+                      signature);
         MBMHDeezerFallback(signature, @"No Apple track for the MusicBrainz codes");
         return;
     }
     if (!MBMHSystemEnabled()) {
         MBGuestAppendHapticEvent(@"Apple Music Haptics is disabled in iOS Settings");
+        MBMHSetStatus(@"disabled", @"Enable Music Haptics in iOS Accessibility settings",
+                      signature);
         return;
     }
     id manager = MBMHManager();
     SEL sel = NSSelectorFromString(@"checkHapticTrackAvailabilityForMediaMatchingCode:completionHandler:");
     if (!manager || ![manager respondsToSelector:sel]) {
         MBGuestAppendHapticEvent(@"Apple haptic availability API unavailable");
+        MBMHSetStatus(@"error", @"Apple haptic availability API unavailable", signature);
         return;
     }
     NSString *code = codes[index];
+    if (MBMHIsRejectedISRC(code)) {
+        MBGuestAppendHapticEvent([NSString stringWithFormat:
+            @"Skipped recently rejected Apple ISRC %@", code]);
+        MBMHCheckISRCs(codes, index + 1, signature);
+        return;
+    }
+    MBMHSetStatus(@"checking", [NSString stringWithFormat:
+        @"Checking Apple's haptic catalog: %@", code], signature);
     void (^completion)(BOOL) = ^(BOOL available) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!MBMHStillCurrent(signature)) return;
             if (!available) {
+                MBMHRememberRejectedISRC(code);
                 MBMHCheckISRCs(codes, index + 1, signature);
                 return;
             }
             gMBMHVerifiedISRC = [code copy];
+            MBMHSetStatus(@"ready", [NSString stringWithFormat:
+                @"Apple has a Music Haptics track for %@", code], signature);
             MBMHSaveVerifiedISRC(signature, code);
             MBGuestAppendHapticEvent([NSString stringWithFormat:
                 @"Apple confirms haptic track for ISRC %@", code]);
@@ -436,6 +523,8 @@ static void MBMHSearchRecording(NSString *title, NSString *artist,
     MBGuestAppendHapticEvent([NSString stringWithFormat:
         @"MusicBrainz: searching %@ — %@%@", title, artist,
         duration > 30 ? [NSString stringWithFormat:@" (%.0fs)", duration] : @""]);
+    MBMHSetStatus(@"searching", @"Searching MusicBrainz for the exact recording",
+                  signature);
     MBMHRequestJSON(url, ^(NSDictionary *response) {
         if (!MBMHStillCurrent(signature)) return;
         NSArray *recordings = response[@"recordings"];
@@ -551,6 +640,7 @@ static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
     }
     gMBMHSongSignature = [signature copy];
     gMBMHVerifiedISRC = nil;
+    MBMHSetStatus(@"searching", @"Identifying exact recording and ISRC", signature);
     gMBMHLastWriteAt = 0;
     gMBMHLastInsertionLogAt = 0;
     gMBMHCurrentTitle = [title copy];
@@ -560,12 +650,15 @@ static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
     gMBMHDeezerAttemptedSignature = nil;
     if (existingISRC.length) {
         MBGuestAppendHapticEvent(@"YouTube Music supplied an ISRC; no override necessary");
+        MBMHSetStatus(@"ready", @"Player supplied its own ISRC", signature);
         return;
     }
     NSDictionary *cache = [NSUserDefaults.lcSharedDefaults dictionaryForKey:kMBMHCacheKey];
     NSString *cachedCode = cache[signature];
     if (MBMHValidISRC(cachedCode)) {
         gMBMHVerifiedISRC = cachedCode;
+        MBMHSetStatus(@"ready", [NSString stringWithFormat:
+            @"Cached Apple-compatible ISRC %@", cachedCode], signature);
         MBGuestAppendHapticEvent([NSString stringWithFormat:
             @"Verified ISRC cache hit: %@", cachedCode]);
         MBMHApplyVerifiedISRC(cachedCode, signature);
