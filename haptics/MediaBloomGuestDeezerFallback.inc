@@ -10,7 +10,7 @@ static NSURL *MBMHDZSearchURL(NSString *title, NSString *artist) {
     components.queryItems = @[
         [NSURLQueryItem queryItemWithName:@"q"
                    value:[NSString stringWithFormat:@"%@ %@", title ?: @"", artist ?: @""]],
-        [NSURLQueryItem queryItemWithName:@"limit" value:@"25"]
+        [NSURLQueryItem queryItemWithName:@"limit" value:@"50"]
     ];
     return components.URL;
 }
@@ -75,12 +75,12 @@ static BOOL MBMHDZArtistMatch(NSString *expected, NSString *actual) {
     return NO;
 }
 
-static BOOL MBMHDZTrackMatches(NSDictionary *track) {
+// Alternate releases only qualify when title (INCLUDING remix/radio/live
+// qualifiers), artist, and duration match. Never silently drop title suffixes.
+static BOOL MBMHDZTrackMatchesMode(NSDictionary *track, BOOL alternateRelease) {
     if (![track isKindOfClass:NSDictionary.class]) return NO;
     NSString *trackTitle = track[@"title"];
     if (![trackTitle isKindOfClass:NSString.class]) return NO;
-    // Do NOT accept title_short here: it would hide "live", "remix" and
-    // "sped up" version suffixes, leading to an incorrect recording ISRC.
     if (![MBMHNormalized(trackTitle) isEqualToString:
           MBMHNormalized(gMBMHCurrentTitle)]) return NO;
     NSDictionary *artist = track[@"artist"];
@@ -89,12 +89,17 @@ static BOOL MBMHDZTrackMatches(NSDictionary *track) {
     if (![artistName isKindOfClass:NSString.class] ||
         !MBMHDZArtistMatch(gMBMHCurrentArtist, artistName)) return NO;
     NSNumber *duration = track[@"duration"];
-    if (gMBMHCurrentDuration > 30) {
+    if (alternateRelease) {
+        // Without a measured duration, cross-album matches are unsafe.
+        if (gMBMHCurrentDuration <= 30 ||
+            ![duration respondsToSelector:@selector(doubleValue)] ||
+            fabs([duration doubleValue] - gMBMHCurrentDuration) > 2.0) return NO;
+    } else if (gMBMHCurrentDuration > 30) {
         if (![duration respondsToSelector:@selector(doubleValue)] ||
             [duration doubleValue] <= 30 ||
             fabs([duration doubleValue] - gMBMHCurrentDuration) > 15.0) return NO;
     }
-    if (gMBMHCurrentAlbum.length) {
+    if (!alternateRelease && gMBMHCurrentAlbum.length) {
         NSDictionary *album = track[@"album"];
         NSString *albumName = [album isKindOfClass:NSDictionary.class] ?
             album[@"title"] : nil;
@@ -102,6 +107,10 @@ static BOOL MBMHDZTrackMatches(NSDictionary *track) {
               MBMHNormalized(gMBMHCurrentAlbum)]) return NO;
     }
     return YES;
+}
+
+static BOOL MBMHDZTrackMatches(NSDictionary *track) {
+    return MBMHDZTrackMatchesMode(track, NO);
 }
 
 static BOOL MBMHDZCollaboratorsMatch(NSDictionary *track) {
@@ -132,45 +141,52 @@ static BOOL MBMHDZCollaboratorsMatch(NSDictionary *track) {
 
 static void MBMHDZCheckCandidates(NSArray<NSDictionary *> *candidates,
                                   NSUInteger index, NSString *commonCode,
-                                  NSString *signature) {
+                                  NSString *signature, BOOL alternateRelease) {
     if (!MBMHStillCurrent(signature)) return;
     if (index >= candidates.count) {
         if (!MBMHValidISRC(commonCode)) {
             MBGuestAppendHapticEvent(
                 @"Deezer: could not verify one shared ISRC; no code inserted");
+            MBMHSetStatus(@"unavailable", @"No trustworthy Deezer ISRC found", signature);
             return;
         }
         MBGuestAppendHapticEvent([NSString stringWithFormat:
             @"Deezer confirms ISRC %@ for %lu matching track(s); checking Apple",
             commonCode, (unsigned long)candidates.count]);
+        MBMHSetStatus(@"checking", [NSString stringWithFormat:
+            @"Deezer matched ISRC %@; checking Apple's catalog", commonCode], signature);
         MBMHCheckISRCs(@[commonCode], 0, signature);
         return;
     }
     NSURL *url = MBMHDZTrackURL(candidates[index][@"id"]);
     if (!url) {
         MBGuestAppendHapticEvent(@"Deezer returned invalid track ID");
+        MBMHSetStatus(@"unavailable", @"Invalid Deezer track ID", signature);
         return;
     }
     MBMHDZRequest(url, signature, ^(NSDictionary *detail) {
         if (!MBMHStillCurrent(signature)) return;
-        if (!detail || !MBMHDZTrackMatches(detail) ||
+        if (!detail || !MBMHDZTrackMatchesMode(detail, alternateRelease) ||
             !MBMHDZCollaboratorsMatch(detail)) {
             MBGuestAppendHapticEvent(
-                @"Deezer track details did not match title/artist/album/duration");
+                @"Deezer track details did not match title/artist/version/duration");
+            MBMHSetStatus(@"unavailable", @"Deezer version or credits did not match", signature);
             return;
         }
         NSString *code = detail[@"isrc"];
         if (!MBMHValidISRC(code)) {
             MBGuestAppendHapticEvent(@"Deezer recording has no valid ISRC");
+            MBMHSetStatus(@"unavailable", @"Deezer recording has no valid ISRC", signature);
             return;
         }
         code = code.uppercaseString;
         if (commonCode.length && ![commonCode isEqualToString:code]) {
             MBGuestAppendHapticEvent(
                 @"Deezer candidates have different ISRCs; nothing inserted");
+            MBMHSetStatus(@"unavailable", @"Different releases have different ISRCs", signature);
             return;
         }
-        MBMHDZCheckCandidates(candidates, index + 1, code, signature);
+        MBMHDZCheckCandidates(candidates, index + 1, code, signature, alternateRelease);
     });
 }
 
@@ -181,42 +197,64 @@ static void MBMHDeezerFallback(NSString *signature, NSString *reason) {
     if (!gMBMHCurrentTitle.length || !gMBMHCurrentArtist.length) return;
     MBGuestAppendHapticEvent([NSString stringWithFormat:
         @"Deezer fallback: %@", reason ?: @"MusicBrainz incomplete"]);
+    MBMHSetStatus(@"searching", @"Searching exact versions in Deezer", signature);
     NSURL *url = MBMHDZSearchURL(gMBMHCurrentTitle, gMBMHCurrentArtist);
     MBMHDZRequest(url, signature, ^(NSDictionary *results) {
         if (!MBMHStillCurrent(signature)) return;
         NSArray *raw = results[@"data"];
         if (![raw isKindOfClass:NSArray.class]) {
             MBGuestAppendHapticEvent(@"Deezer search returned no track list");
+            MBMHSetStatus(@"unavailable", @"Deezer search not available", signature);
             return;
         }
-        NSMutableArray<NSDictionary *> *candidates = [NSMutableArray array];
+        NSMutableArray<NSDictionary *> *exact = [NSMutableArray array];
+        NSMutableArray<NSDictionary *> *otherReleases = [NSMutableArray array];
         NSMutableSet *seenIDs = [NSMutableSet set];
         for (id item in raw) {
             if (![item isKindOfClass:NSDictionary.class]) continue;
             NSDictionary *track = item;
-            if (!MBMHDZTrackMatches(track)) continue;
+            BOOL sameRelease = MBMHDZTrackMatches(track);
+            BOOL alternative = !sameRelease && MBMHDZTrackMatchesMode(track, YES);
+            if (!sameRelease && !alternative) continue;
             id identifier = track[@"id"];
             if (![identifier respondsToSelector:@selector(longLongValue)] ||
                 [identifier longLongValue] <= 0) continue;
             NSNumber *trackID = @([identifier longLongValue]);
             if ([seenIDs containsObject:trackID]) continue;
             [seenIDs addObject:trackID];
-            [candidates addObject:track];
+            if (sameRelease) [exact addObject:track];
+            else [otherReleases addObject:track];
+        }
+        BOOL alternateRelease = exact.count == 0;
+        NSArray<NSDictionary *> *candidates = alternateRelease ? otherReleases : exact;
+        // Cross-album results must independently AGREE on their code.
+        // A single otherwise-similar copy is not enough evidence.
+        if (alternateRelease && candidates.count < 2) {
+            MBGuestAppendHapticEvent(
+                @"Deezer: no trustworthy same-version recording; alternate releases unverified");
+            MBMHSetStatus(@"unavailable", @"No safe matching recording version", signature);
+            return;
         }
         if (candidates.count == 0) {
             MBGuestAppendHapticEvent(
                 @"Deezer: no exact track matching title, artist, album and duration");
+            MBMHSetStatus(@"unavailable", @"No exact track matching version and credits",
+                          signature);
             return;
         }
         if (candidates.count > 5) {
             MBGuestAppendHapticEvent([NSString stringWithFormat:
                 @"Deezer: %lu possible tracks, too ambiguous to choose an ISRC",
                 (unsigned long)candidates.count]);
+            MBMHSetStatus(@"unavailable", @"Too many different Deezer versions", signature);
             return;
         }
         MBGuestAppendHapticEvent([NSString stringWithFormat:
-            @"Deezer: verifying ISRC for %lu exact track(s)",
-            (unsigned long)candidates.count]);
-        MBMHDZCheckCandidates(candidates, 0, nil, signature);
+            @"Deezer: verifying ISRC for %lu %@ track(s)",
+            (unsigned long)candidates.count,
+            alternateRelease ? @"same-version alternate-release" : @"exact"]);
+        MBMHSetStatus(@"checking", @"Verifying same recording across releases",
+                      signature);
+        MBMHDZCheckCandidates(candidates, 0, nil, signature, alternateRelease);
     });
 }
