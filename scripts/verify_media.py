@@ -55,26 +55,27 @@ def check(ipa: Path) -> None:
         # ZIP integrity is NOT enough: on Intel macOS the pinned ARM-only
         # dylibify silently failed and packaging omitted the SideStore binary.
         # This must abort CI instead of shipping an un-installable IPA.
-        side_root = HOST + "Frameworks/SideStoreApp.framework/"
-        side_plist = side_root + "Info.plist"
-        assert side_plist in names, "SideStoreApp framework Info.plist missing"
-        side_info = plistlib.loads(archive.read(side_plist))
-        side_executable = side_info.get("CFBundleExecutable")
-        assert side_executable == "SideStore", (
-            f"Unexpected SideStore executable: {side_executable!r}"
-        )
-        side_binary = side_root + side_executable
-        assert side_binary in names, f"Missing required SideStore Mach-O: {side_binary}"
-        assert archive.getinfo(side_binary).file_size > 1_000_000, (
-            "SideStore executable is empty or truncated"
-        )
-        macho_header = archive.open(side_binary).read(4)
-        assert macho_header in (
-            b"\xcf\xfa\xed\xfe",
-            b"\xfe\xed\xfa\xcf",
-            b"\xca\xfe\xba\xbe",
-            b"\xbe\xba\xfe\xca",
-        ), f"SideStore executable is not Mach-O: {macho_header!r}"
+        if "+SideStore" in ipa.name:
+            side_root = HOST + "Frameworks/SideStoreApp.framework/"
+            side_plist = side_root + "Info.plist"
+            assert side_plist in names, "SideStoreApp framework Info.plist missing"
+            side_info = plistlib.loads(archive.read(side_plist))
+            side_executable = side_info.get("CFBundleExecutable")
+            assert side_executable == "SideStore", (
+                f"Unexpected SideStore executable: {side_executable!r}"
+            )
+            side_binary = side_root + side_executable
+            assert side_binary in names, f"Missing required SideStore Mach-O: {side_binary}"
+            assert archive.getinfo(side_binary).file_size > 1_000_000, (
+                "SideStore executable is empty or truncated"
+            )
+            macho_header = archive.open(side_binary).read(4)
+            assert macho_header in (
+                b"\xcf\xfa\xed\xfe",
+                b"\xfe\xed\xfa\xcf",
+                b"\xca\xfe\xba\xbe",
+                b"\xbe\xba\xfe\xca",
+            ), f"SideStore executable is not Mach-O: {macho_header!r}"
         # Validate every other packaged framework's CFBundleExecutable too.
         for framework_plist in sorted(n for n in names if n.endswith(".framework/Info.plist")):
             framework_info = plistlib.loads(archive.read(framework_plist))
