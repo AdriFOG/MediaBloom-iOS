@@ -79,7 +79,7 @@ assert "alternateRelease && candidates.count < 2" in guest_deezer
 assert "same-version alternate-release" in guest_deezer
 assert "MBMHDZCheckCandidates(candidates, 0, nil, signature, alternateRelease)" in guest_deezer
 assert '[NSURLQueryItem queryItemWithName:@"limit" value:@"50"]' in guest_deezer
-assert "title_short" in guest_deezer
+assert "title_short" not in guest_deezer  # Never drop radio/live/remix qualifiers
 # Apple negative responses are cached by exact ISRC, never by song title,
 # and expire after twelve hours so catalog additions can be retried.
 assert "MediaBloomHapticsRejectedISRCV1" in guest_official
