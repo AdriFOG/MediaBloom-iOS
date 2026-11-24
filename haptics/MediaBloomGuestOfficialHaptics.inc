@@ -15,6 +15,13 @@ static NSTimeInterval gMBMHLastWriteAt = 0;
 static NSTimeInterval gMBMHNextRequestAt = 0;
 static id gMBMHObserverToken = nil;
 static NSString *gMBMHLastHapticStatus = nil;
+static NSString *gMBMHCurrentTitle = nil;
+static NSString *gMBMHCurrentArtist = nil;
+static NSString *gMBMHCurrentAlbum = nil;
+static NSTimeInterval gMBMHCurrentDuration = 0;
+static NSString *gMBMHDeezerAttemptedSignature = nil;
+static NSTimeInterval gMBMHMusicBrainzCooldownUntil = 0;
+static void MBMHDeezerFallback(NSString *signature, NSString *reason);
 
 static BOOL MBMHEnabled(void) {
     NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
@@ -174,6 +181,14 @@ static void MBMHRequestJSONAttempt(NSURL *url, NSUInteger attempt,
                     if (completion) completion(json);
                     return;
                 }
+                // MusicBrainz sometimes responds 503 for an entire session.
+                // Switch to Deezer rather than flooding it with retries.
+                if (status == 503) {
+                    gMBMHMusicBrainzCooldownUntil = NSDate.timeIntervalSinceReferenceDate + 300.0;
+                    MBGuestAppendHapticEvent(@"MusicBrainz HTTP 503; using Deezer for 5 minutes");
+                    if (completion) completion(nil);
+                    return;
+                }
                 NSString *reason = error ?
                     [NSString stringWithFormat:@"network error %ld", (long)error.code] :
                     [NSString stringWithFormat:@"HTTP %ld", (long)status];
@@ -254,7 +269,8 @@ static void MBMHCheckISRCs(NSArray<NSString *> *codes, NSUInteger index,
                           NSString *signature) {
     if (!MBMHStillCurrent(signature)) return;
     if (index >= codes.count) {
-        MBGuestAppendHapticEvent(@"Apple has no confirmed haptic track for the matched ISRCs");
+        MBGuestAppendHapticEvent(@"Apple has no confirmed haptic track for matched ISRCs");
+        MBMHDeezerFallback(signature, @"No Apple track for the MusicBrainz codes");
         return;
     }
     if (!MBMHSystemEnabled()) {
@@ -309,7 +325,8 @@ static void MBMHLookupISRC(NSString *recordingID, NSString *signature) {
         if (!MBMHStillCurrent(signature)) return;
         NSArray<NSString *> *codes = MBMHValidCodesFromRecording(detail);
         if (codes.count == 0) {
-            MBGuestAppendHapticEvent(@"No verified ISRC found for exact MusicBrainz recording");
+            MBGuestAppendHapticEvent(@"No ISRC listed for exact MusicBrainz recording");
+            MBMHDeezerFallback(signature, @"MusicBrainz exact recording has no ISRC");
             return;
         }
         NSArray<NSString *> *limited = [codes subarrayWithRange:
@@ -332,7 +349,8 @@ static void MBMHLookupSharedISRCs(NSArray<NSString *> *ids, NSUInteger index,
             sortedArrayUsingSelector:@selector(compare:)];
         if (common.count == 0) {
             MBGuestAppendHapticEvent(
-                @"MusicBrainz: different recordings have no common ISRC; nothing injected");
+                @"MusicBrainz: recordings disagree on ISRC; checking Deezer");
+            MBMHDeezerFallback(signature, @"MusicBrainz recordings have different ISRCs");
             return;
         }
         NSArray<NSString *> *limited = [common subarrayWithRange:
@@ -348,7 +366,8 @@ static void MBMHLookupSharedISRCs(NSArray<NSString *> *ids, NSUInteger index,
         NSArray<NSString *> *codes = MBMHValidCodesFromRecording(detail);
         if (codes.count == 0) {
             MBGuestAppendHapticEvent(
-                @"Ambiguous MusicBrainz recordings: one lacks an ISRC; nothing injected");
+                @"MusicBrainz recording has no ISRC; checking Deezer");
+            MBMHDeezerFallback(signature, @"A MusicBrainz candidate has no ISRC");
             return;
         }
         NSSet<NSString *> *available = [NSSet setWithArray:codes];
@@ -357,7 +376,8 @@ static void MBMHLookupSharedISRCs(NSArray<NSString *> *ids, NSUInteger index,
         if (intersection) [common intersectSet:available];
         if (common.count == 0) {
             MBGuestAppendHapticEvent(
-                @"Ambiguous MusicBrainz recordings: ISRCs disagree; nothing injected");
+                @"MusicBrainz candidate ISRCs disagree; checking Deezer");
+            MBMHDeezerFallback(signature, @"MusicBrainz codes do not agree");
             return;
         }
         MBMHLookupSharedISRCs(ids, index + 1, common, signature);
@@ -396,6 +416,10 @@ static NSURL *MBMHSearchURL(NSString *title, NSString *artist) {
 static void MBMHSearchRecording(NSString *title, NSString *artist,
                               NSTimeInterval duration, NSString *album,
                               NSString *signature) {
+    if (NSDate.timeIntervalSinceReferenceDate < gMBMHMusicBrainzCooldownUntil) {
+        MBMHDeezerFallback(signature, @"MusicBrainz temporarily unavailable");
+        return;
+    }
     NSURL *url = MBMHSearchURL(title, artist);
     MBGuestAppendHapticEvent([NSString stringWithFormat:
         @"MusicBrainz: searching %@ — %@%@", title, artist,
@@ -404,7 +428,8 @@ static void MBMHSearchRecording(NSString *title, NSString *artist,
         if (!MBMHStillCurrent(signature)) return;
         NSArray *recordings = response[@"recordings"];
         if (![recordings isKindOfClass:NSArray.class]) {
-            MBGuestAppendHapticEvent(@"MusicBrainz unavailable; request details logged above");
+            MBGuestAppendHapticEvent(@"MusicBrainz unavailable; checking Deezer");
+            MBMHDeezerFallback(signature, @"MusicBrainz search unavailable");
             return;
         }
         NSMutableArray<NSDictionary *> *matches = [NSMutableArray array];
@@ -438,7 +463,8 @@ static void MBMHSearchRecording(NSString *title, NSString *artist,
             }];
         }
         if (matches.count == 0) {
-            MBGuestAppendHapticEvent(@"MusicBrainz: no exact recording match; no ISRC inserted");
+            MBGuestAppendHapticEvent(@"MusicBrainz: no exact recording; checking Deezer");
+            MBMHDeezerFallback(signature, @"No exact MusicBrainz recording");
             return;
         }
         NSMutableArray<NSDictionary *> *candidates = [matches mutableCopy];
@@ -484,8 +510,9 @@ static void MBMHSearchRecording(NSString *title, NSString *artist,
         }
         if (candidates.count > 5) {
             MBGuestAppendHapticEvent([NSString stringWithFormat:
-                @"MusicBrainz: %lu ambiguous recordings; no unsafe ISRC guess",
+                @"MusicBrainz: %lu ambiguous recordings; checking Deezer",
                 (unsigned long)candidates.count]);
+            MBMHDeezerFallback(signature, @"Too many ambiguous MusicBrainz recordings");
             return;
         }
         NSMutableArray<NSString *> *ids = [NSMutableArray array];
@@ -513,6 +540,11 @@ static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
     gMBMHSongSignature = [signature copy];
     gMBMHVerifiedISRC = nil;
     gMBMHLastWriteAt = 0;
+    gMBMHCurrentTitle = [title copy];
+    gMBMHCurrentArtist = [artist copy];
+    gMBMHCurrentAlbum = MBGuestString(info, MBGuestStringSymbol("MPMediaItemPropertyAlbumTitle"));
+    gMBMHCurrentDuration = MBMHDuration(info);
+    gMBMHDeezerAttemptedSignature = nil;
     if (existingISRC.length) {
         MBGuestAppendHapticEvent(@"YouTube Music supplied an ISRC; no override necessary");
         return;
