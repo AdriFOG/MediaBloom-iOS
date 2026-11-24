@@ -13,6 +13,11 @@ static NSString *gMBGuestSongSignature = nil;
 static NSInteger gMBGuestSampleCount = 0;
 static BOOL gMBGuestProbeReportedEmpty = NO;
 
+// An opt-in official haptics bridge is linked after this read-only probe.
+static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
+                                 NSString *artist, NSString *existingISRC);
+static void MBMHStartGuestObserver(void);
+
 static NSString *MBGuestStringSymbol(const char *symbolName) {
     NSString * const *address = (NSString * const *)dlsym(RTLD_DEFAULT, symbolName);
     return address ? *address : nil;
@@ -80,6 +85,9 @@ static void MBGuestInspectNowPlaying(void) {
                 isrc.length ? isrc : @"not provided"]);
         }
     }
+    // The official experiment only runs when explicitly opted in.
+    MBMHInspectCurrentSong(info, title, artist, isrc);
+
     // Heartbeat proves guest code executed; absence of metadata does not mean
     // the player stopped or that a song has no haptic track.
     [shared setInteger:gMBGuestSampleCount forKey:kMBGuestProbeSamples];
@@ -102,6 +110,7 @@ static void MBInstallGuestHapticsProbe(void) {
         gMBGuestProbeReportedEmpty = NO;
         gMBGuestSongSignature = nil;
         MBGuestAppendHapticEvent(@"Guest probe loaded in YouTube Music");
+        MBMHStartGuestObserver();
         MBGuestInspectNowPlaying();
         [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:YES block:^(NSTimer *timer) {
             [shared synchronize];
