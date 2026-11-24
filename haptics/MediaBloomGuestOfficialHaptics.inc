@@ -136,33 +136,67 @@ static void MBMHStartGuestObserver(void) {
 
 // MusicBrainz requires both a descriptive user agent and <=1 request/second.
 // Reserve each slot on the main queue BEFORE starting a request.
-static void MBMHRequestJSON(NSURL *url, void (^completion)(NSDictionary *)) {
+static void MBMHRequestJSONAttempt(NSURL *url, NSUInteger attempt,
+                                   void (^completion)(NSDictionary *)) {
     NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
     NSTimeInterval next = MAX(now, gMBMHNextRequestAt);
-    gMBMHNextRequestAt = next + 1.2;
+    gMBMHNextRequestAt = next + 1.3; // Reserve globally before any task starts.
     int64_t delay = (int64_t)((next - now) * NSEC_PER_SEC);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, delay), dispatch_get_main_queue(), ^{
         if (!MBMHEnabled()) return;
+        if (!url || ![url.scheme isEqualToString:@"https"] ||
+            ![url.host isEqualToString:@"musicbrainz.org"]) return;
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-        request.timeoutInterval = 12;
+        request.timeoutInterval = 15;
         request.HTTPMethod = @"GET";
-        [request setValue:@"MediaBloomMusicHaptics/0.1 (https://github.com/AdriFOG/MediaBloom-iOS)"
+        [request setValue:@"MediaBloomMusicHaptics/0.2 (https://github.com/AdriFOG/MediaBloom-iOS)"
        forHTTPHeaderField:@"User-Agent"];
         [request setValue:@"application/json" forHTTPHeaderField:@"Accept"];
         [[NSURLSession.sharedSession dataTaskWithRequest:request
             completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+            NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class]
+                ? [(NSHTTPURLResponse *)response statusCode] : 0;
             NSDictionary *json = nil;
-            if (!error && data.length > 0 && data.length < 400000 &&
-                [(NSHTTPURLResponse *)response statusCode] == 200) {
+            if (!error && status == 200 && data.length > 0 && data.length < 600000) {
                 id object = [NSJSONSerialization JSONObjectWithData:data
                                             options:0 error:nil];
                 if ([object isKindOfClass:NSDictionary.class]) json = object;
             }
+            const BOOL transientHTTP = status == 429 || status == 500 ||
+                status == 502 || status == 503 || status == 504;
+            const BOOL transientNetwork = error && (
+                error.code == NSURLErrorTimedOut ||
+                error.code == NSURLErrorNetworkConnectionLost ||
+                error.code == NSURLErrorCannotConnectToHost);
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (MBMHEnabled() && completion) completion(json);
+                if (!MBMHEnabled()) return;
+                if (json) {
+                    if (completion) completion(json);
+                    return;
+                }
+                NSString *reason = error ?
+                    [NSString stringWithFormat:@"network error %ld", (long)error.code] :
+                    [NSString stringWithFormat:@"HTTP %ld", (long)status];
+                if ((transientHTTP || transientNetwork) && attempt < 2) {
+                    NSTimeInterval backoff = attempt == 0 ? 3.0 : 6.0;
+                    MBGuestAppendHapticEvent([NSString stringWithFormat:
+                        @"MusicBrainz %@, retry %lu/2", reason, (unsigned long)(attempt+1)]);
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                        (int64_t)(backoff * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                        if (MBMHEnabled()) MBMHRequestJSONAttempt(url, attempt + 1, completion);
+                    });
+                } else {
+                    MBGuestAppendHapticEvent([NSString stringWithFormat:
+                        @"MusicBrainz request failed: %@ (no ISRC applied)", reason]);
+                    if (completion) completion(nil);
+                }
             });
         }] resume];
     });
+}
+
+static void MBMHRequestJSON(NSURL *url, void (^completion)(NSDictionary *)) {
+    MBMHRequestJSONAttempt(url, 0, completion);
 }
 
 static void MBMHApplyVerifiedISRC(NSString *code, NSString *signature) {
@@ -228,7 +262,7 @@ static void MBMHCheckISRCs(NSArray<NSString *> *codes, NSUInteger index,
         return;
     }
     id manager = MBMHManager();
-    SEL sel = NSSelectorFromString(@"checkHapticTrackAvailabilityForMedia:completionHandler:");
+    SEL sel = NSSelectorFromString(@"checkHapticTrackAvailabilityForMediaMatchingCode:completionHandler:");
     if (!manager || ![manager respondsToSelector:sel]) {
         MBGuestAppendHapticEvent(@"Apple haptic availability API unavailable");
         return;
