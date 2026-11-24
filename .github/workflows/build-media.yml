@@ -20,7 +20,8 @@ permissions:
 jobs:
   build-media:
     name: Build independently installable MediaBloom
-    runs-on: macos-latest
+    # Intel pool avoids the prolonged GitHub-hosted macOS ARM runner queue.
+    runs-on: macos-15-intel
     defaults:
       run:
         working-directory: source
