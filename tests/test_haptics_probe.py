@@ -43,7 +43,17 @@ assert "MBMHStartGuestObserver();" in guest_probe
 assert "MBMHCheckISRCs(" in guest_official
 assert "MBMHSearchRecording(" in guest_official
 assert "MBMHApplyVerifiedISRC(" in guest_official
-assert "checkHapticTrackAvailabilityForMedia:completionHandler:" in guest_official
+assert "checkHapticTrackAvailabilityForMediaMatchingCode:completionHandler:" in guest_official
+assert "checkHapticTrackAvailabilityForMedia:completionHandler:" not in guest_official
+assert "MBMHRequestJSONAttempt" in guest_official
+assert "MusicBrainz request failed:" in guest_official
+assert "retry %lu/2" in guest_official
+assert "MBMHLookupSharedISRCs" in guest_official
+assert "MBMHRecordingMatchesAlbum" in guest_official
+assert "different recordings have no common ISRC" in guest_official
+assert "no unsafe ISRC guess" in guest_official
+assert "second - nearest >= 2.0" in guest_official
+assert 'MBMHSearchRecording(title, artist, MBMHDuration(info), album, signature)' in guest_official
 assert "setNowPlayingInfo:" in guest_official
 assert "musicbrainz.org/ws/2/recording/" in guest_official
 assert "gMBMHNextRequestAt = next + 1.2" in guest_official
