@@ -28,6 +28,7 @@ assert "UserDefaults.standard.set(recordedEvents" in source
 assert "UserDefaults.standard.synchronize()" in source
 assert "Apple Music Haptics ACTIVE" in source
 guest_probe = Path("../media-tools/haptics/MediaBloomGuestNowPlayingProbe.inc").read_text()
+guest_official = Path("../media-tools/haptics/MediaBloomGuestOfficialHaptics.inc").read_text()
 assert "MBInstallGuestHapticsProbe();" in ui or "MBInstallGuestHapticsProbe();" in Path("TweakLoader/TweakLoader.m").read_text()
 loader = Path("TweakLoader/TweakLoader.m").read_text()
 assert 'com.google.ios.youtubemusic' in guest_probe
@@ -37,6 +38,22 @@ assert 'MediaBloomHapticsGuestEventsV1' in guest_probe
 assert 'MediaBloomHapticsGuestSamplesV1' in guest_probe
 assert 'MPNowPlayingInfoCenter' in guest_probe
 assert 'MBInstallGuestHapticsProbe();' in loader
+assert "MBMHInspectCurrentSong(info, title, artist, isrc);" in guest_probe
+assert "MBMHStartGuestObserver();" in guest_probe
+assert "MBMHCheckISRCs(" in guest_official
+assert "MBMHSearchRecording(" in guest_official
+assert "MBMHApplyVerifiedISRC(" in guest_official
+assert "checkHapticTrackAvailabilityForMedia:completionHandler:" in guest_official
+assert "setNowPlayingInfo:" in guest_official
+assert "musicbrainz.org/ws/2/recording/" in guest_official
+assert "gMBMHNextRequestAt = next + 1.2" in guest_official
+assert "MBMHNormalized" in guest_official
+assert "MBMHStillCurrent" in guest_official
+assert "MediaBloomHapticsAutoISRCV1" in guest_official
+assert "MediaBloomHapticsAutoISRCV1" in appearance
+assert "automaticMusicHaptics = false" in appearance
+assert "Toggle(isOn: $automaticMusicHaptics)" in appearance
+assert "!@available" not in guest_official
 assert 'LCUtils.appGroupUserDefault.set(false, forKey: guestEnabledKey)' in source
 assert 'shared.set(true, forKey: guestEnabledKey)' in source
 assert 'haptics.guestSamples' in appearance
