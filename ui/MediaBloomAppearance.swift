@@ -389,6 +389,44 @@ struct MediaBloomAppearanceSheet: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if !haptics.guestHapticsState.isEmpty {
+                Label(t("Último resultado de Music Haptics",
+                        "Last Music Haptics result"),
+                      systemImage: haptics.guestHapticsSymbol)
+                    .font(.subheadline.weight(.semibold))
+                Text(haptics.guestHapticsLabel(english: english))
+                    .font(.headline)
+                if !haptics.guestHapticsSong.isEmpty {
+                    Text(haptics.guestHapticsSong)
+                        .font(.footnote)
+                }
+                if !haptics.guestHapticsDetail.isEmpty {
+                    Text(haptics.guestHapticsDetail)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !haptics.guestHapticsDate.isEmpty {
+                    Text(t("Registrado durante la reproducción: ",
+                           "Recorded during playback: ") + haptics.guestHapticsDate)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            if haptics.guestRejectedCount > 0 {
+                Text(t("Códigos descartados temporalmente: ",
+                       "Temporarily rejected codes: ")
+                     + "\(haptics.guestRejectedCount)")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                Button {
+                    haptics.retryRejectedISRCs()
+                } label: {
+                    Label(t("Reintentar códigos descartados",
+                            "Retry previously rejected codes"),
+                          systemImage: "arrow.clockwise")
+                }
+            }
             if haptics.guestSamples > 0 || !haptics.guestEvents.isEmpty {
                 Label(t("Diagnóstico desde YouTube Music", "YouTube Music guest diagnostic"),
                       systemImage: "waveform.path.ecg")
@@ -439,8 +477,8 @@ struct MediaBloomAppearanceSheet: View {
                     Label(t("Borrar registro", "Clear log"), systemImage: "trash")
                 }
             }
-            Text(t("El tweak revisa los datos de YouTube Music cada 2 segundos. No graba audio ni usa el micrófono. El modo automático consulta MusicBrainz por internet; solo iOS puede confirmar vibraciones sincronizadas.",
-                   "The guest tweak checks YouTube Music every 2 seconds. No audio recording or microphone. Auto mode queries MusicBrainz online; only iOS can confirm synchronized haptics."))
+            Text(t("Music Haptics revisa la canción cada medio segundo. Los códigos rechazados se recuerdan durante 12 horas; después se pueden comprobar de nuevo. Busca en MusicBrainz y Deezer sin grabar audio ni usar el micrófono.",
+                   "Music Haptics checks song metadata every half-second. Rejected codes are remembered for 12 hours, then retried. It uses MusicBrainz and Deezer without recording audio or using the microphone."))
                 .font(.caption2)
                 .foregroundColor(.secondary)
             Button {
