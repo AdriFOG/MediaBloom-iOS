@@ -70,10 +70,10 @@ def check(ipa: Path) -> None:
         )
         macho_header = archive.open(side_binary).read(4)
         assert macho_header in (
-            b"\\xcf\\xfa\\xed\\xfe",
-            b"\\xfe\\xed\\xfa\\xcf",
-            b"\\xca\\xfe\\xba\\xbe",
-            b"\\xbe\\xba\\xfe\\xca",
+            b"\xcf\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf",
+            b"\xca\xfe\xba\xbe",
+            b"\xbe\xba\xfe\xca",
         ), f"SideStore executable is not Mach-O: {macho_header!r}"
         # Validate every other packaged framework's CFBundleExecutable too.
         for framework_plist in sorted(n for n in names if n.endswith(".framework/Info.plist")):
