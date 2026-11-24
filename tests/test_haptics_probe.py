@@ -56,7 +56,7 @@ assert "second - nearest >= 2.0" in guest_official
 assert 'MBMHSearchRecording(title, artist, MBMHDuration(info), album, signature)' in guest_official
 assert "setNowPlayingInfo:" in guest_official
 assert "musicbrainz.org/ws/2/recording/" in guest_official
-assert "gMBMHNextRequestAt = next + 1.2" in guest_official
+assert "gMBMHNextRequestAt = next + 1.3" in guest_official
 assert "MBMHNormalized" in guest_official
 assert "MBMHStillCurrent" in guest_official
 assert "MediaBloomHapticsAutoISRCV1" in guest_official
