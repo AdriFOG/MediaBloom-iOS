@@ -52,6 +52,38 @@ def check(ipa: Path) -> None:
             assert "group.com.SideStore.SideStore" in alt_groups, \
                 f"Missing SideStore group declaration: {alt_groups}"
         assert HOST + "Frameworks/LiveContainerSwiftUI.framework/LiveContainerSwiftUI" in names
+        # ZIP integrity is NOT enough: on Intel macOS the pinned ARM-only
+        # dylibify silently failed and packaging omitted the SideStore binary.
+        # This must abort CI instead of shipping an un-installable IPA.
+        side_root = HOST + "Frameworks/SideStoreApp.framework/"
+        side_plist = side_root + "Info.plist"
+        assert side_plist in names, "SideStoreApp framework Info.plist missing"
+        side_info = plistlib.loads(archive.read(side_plist))
+        side_executable = side_info.get("CFBundleExecutable")
+        assert side_executable == "SideStore", (
+            f"Unexpected SideStore executable: {side_executable!r}"
+        )
+        side_binary = side_root + side_executable
+        assert side_binary in names, f"Missing required SideStore Mach-O: {side_binary}"
+        assert archive.getinfo(side_binary).file_size > 1_000_000, (
+            "SideStore executable is empty or truncated"
+        )
+        macho_header = archive.open(side_binary).read(4)
+        assert macho_header in (
+            b"\\xcf\\xfa\\xed\\xfe",
+            b"\\xfe\\xed\\xfa\\xcf",
+            b"\\xca\\xfe\\xba\\xbe",
+            b"\\xbe\\xba\\xfe\\xca",
+        ), f"SideStore executable is not Mach-O: {macho_header!r}"
+        # Validate every other packaged framework's CFBundleExecutable too.
+        for framework_plist in sorted(n for n in names if n.endswith(".framework/Info.plist")):
+            framework_info = plistlib.loads(archive.read(framework_plist))
+            executable = framework_info.get("CFBundleExecutable")
+            if executable:
+                binary = framework_plist[:-len("Info.plist")] + executable
+                assert binary in names and archive.getinfo(binary).file_size > 0, (
+                    f"Missing framework executable: {binary}"
+                )
         plugins = [
             x for x in names
             if x.startswith(HOST + "PlugIns/") and x.endswith(".appex/Info.plist")
