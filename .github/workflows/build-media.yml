@@ -20,8 +20,8 @@ permissions:
 jobs:
   build-media:
     name: Build independently installable MediaBloom
-    # Intel pool avoids the prolonged GitHub-hosted macOS ARM runner queue.
-    runs-on: macos-15-intel
+    # The pinned dylibify tool is ARM64-only; Intel runners silently omit SideStore.
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: source
