@@ -182,6 +182,8 @@ struct MediaBloomAppearanceSheet: View {
     @State private var hasWallpaper = false
     @State private var imageError = false
     @StateObject private var haptics = MBHapticsDiagnostic.shared
+    @AppStorage("MediaBloomHapticsAutoISRCV1", store: LCUtils.appGroupUserDefault)
+    private var automaticMusicHaptics = false
 
     private var english: Bool {
         language == "en" || (language == "system" &&
@@ -377,6 +379,16 @@ struct MediaBloomAppearanceSheet: View {
                       : t("Iniciar registro para YouTube Music", "Start YouTube Music capture"),
                       systemImage: haptics.captureActive ? "stop.circle.fill" : "record.circle")
             }
+            Toggle(isOn: $automaticMusicHaptics) {
+                Label(t("Probar Music Haptics automático",
+                        "Try automatic Apple Music Haptics"), systemImage: "waveform")
+            }
+            .disabled(!haptics.hardwareAvailable)
+            Text(t("Experimental: busca la grabación exacta con MusicBrainz y solo añade su ISRC cuando Apple confirma una pista háptica. Activa también el registro y vuelve a abrir YouTube Music.",
+                   "Experimental: looks up the exact recording in MusicBrainz and adds its ISRC only when Apple reports a haptic track. Also start capture and reopen YouTube Music."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if haptics.guestSamples > 0 || !haptics.guestEvents.isEmpty {
                 Label(t("Diagnóstico desde YouTube Music", "YouTube Music guest diagnostic"),
                       systemImage: "waveform.path.ecg")
@@ -427,8 +439,8 @@ struct MediaBloomAppearanceSheet: View {
                     Label(t("Borrar registro", "Clear log"), systemImage: "trash")
                 }
             }
-            Text(t("El registro lee datos locales cada 2 segundos mientras MediaBloom siga ejecutándose. No graba audio ni usa el micrófono. Las vibraciones sincronizadas deben confirmarse por iOS.",
-                   "The probe checks local data every 2 seconds while MediaBloom is running. No audio or microphone capture. iOS must confirm actual synchronized haptics."))
+            Text(t("El tweak revisa los datos de YouTube Music cada 2 segundos. No graba audio ni usa el micrófono. El modo automático consulta MusicBrainz por internet; solo iOS puede confirmar vibraciones sincronizadas.",
+                   "The guest tweak checks YouTube Music every 2 seconds. No audio recording or microphone. Auto mode queries MusicBrainz online; only iOS can confirm synchronized haptics."))
                 .font(.caption2)
                 .foregroundColor(.secondary)
             Button {
