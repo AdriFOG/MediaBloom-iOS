@@ -30,6 +30,7 @@ assert "Apple Music Haptics ACTIVE" in source
 guest_probe = Path("../media-tools/haptics/MediaBloomGuestNowPlayingProbe.inc").read_text()
 guest_official = Path("../media-tools/haptics/MediaBloomGuestOfficialHaptics.inc").read_text()
 guest_deezer = Path("../media-tools/haptics/MediaBloomGuestDeezerFallback.inc").read_text()
+guest_overlay = Path("../media-tools/haptics/MediaBloomGuestHapticsOverlay.inc").read_text()
 assert "MBInstallGuestHapticsProbe();" in ui or "MBInstallGuestHapticsProbe();" in Path("TweakLoader/TweakLoader.m").read_text()
 loader = Path("TweakLoader/TweakLoader.m").read_text()
 assert 'com.google.ios.youtubemusic' in guest_probe
@@ -42,6 +43,29 @@ assert 'MBInstallGuestHapticsProbe();' in loader
 assert "MBMHInspectCurrentSong(info, title, artist, isrc);" in guest_probe
 assert "MBMHStartGuestObserver();" in guest_probe
 assert "MBMHFastRefreshNowPlaying();" in guest_probe
+assert "MBMHUpdateGuestOverlay();" in guest_probe
+assert "static void MBMHForceResync(void);" in guest_probe
+assert "static void MBMHUpdateGuestOverlay(void);" in guest_probe
+assert "MBMHForceResync();" in guest_overlay
+assert "static void MBMHUpdateGuestOverlay(void)" in guest_overlay
+assert "UIActivityIndicatorView" in guest_overlay
+assert "MBMHOverlayText" in guest_overlay
+assert "kMBMHStatusKey" in guest_overlay
+assert "MediaBloomHapticsGuestOverlayV1" in guest_overlay
+assert "Preparando Music Haptics" in guest_overlay
+assert "Resincronizar Music Haptics" in guest_overlay
+assert "static void MBMHForceResync(void)" in guest_official
+assert "Resync requested for ISRC" in guest_official
+assert "playback position preserved" in guest_official
+assert "gMBMHLastAutoResyncAt >= 20.0" in guest_official
+assert 'MBMHSetStatus(@"resyncing"' in guest_official
+assert "MediaBloomHapticsGuestOverlayV1" in appearance
+assert "Toggle(isOn: $showHapticsInPlayer)" in appearance
+assert "guest_overlay" in Path("../media-tools/scripts/apply_haptics_probe.py").read_text()
+for forbidden in ("AVAudioRecorder", "AVAudioEngine", "AVCaptureSession",
+                  "AVAudioPlayer", "pauseCommand", "seekCommand", "setElapsedPlaybackTime:",
+                  "MPRemoteCommandCenter"):
+    assert forbidden not in guest_overlay, forbidden
 assert "scheduledTimerWithTimeInterval:0.5" in guest_probe
 assert "Fast Music Haptics sync enabled (0.5s checks)" in guest_probe
 assert 'MBMHEnabled()' in guest_official
