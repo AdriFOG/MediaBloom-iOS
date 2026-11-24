@@ -42,10 +42,11 @@ def main():
     loader = loader_path.read_text(encoding="utf-8")
     guest_probe = Path("../media-tools/haptics/MediaBloomGuestNowPlayingProbe.inc").read_text(encoding="utf-8")
     guest_official = Path("../media-tools/haptics/MediaBloomGuestOfficialHaptics.inc").read_text(encoding="utf-8")
+    guest_deezer = Path("../media-tools/haptics/MediaBloomGuestDeezerFallback.inc").read_text(encoding="utf-8")
     loader = replace_once(
         loader,
         " __attribute__((constructor))\nstatic void TweakLoaderConstructor()",
-        "\n" + guest_probe + "\n" + guest_official + "\n __attribute__((constructor))\nstatic void TweakLoaderConstructor()",
+        "\n" + guest_probe + "\n" + guest_official + "\n" + guest_deezer + "\n __attribute__((constructor))\nstatic void TweakLoaderConstructor()",
         "guest probe TweakLoader constructor",
     )
     loader = replace_once(
