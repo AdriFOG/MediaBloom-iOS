@@ -41,6 +41,16 @@ assert 'MPNowPlayingInfoCenter' in guest_probe
 assert 'MBInstallGuestHapticsProbe();' in loader
 assert "MBMHInspectCurrentSong(info, title, artist, isrc);" in guest_probe
 assert "MBMHStartGuestObserver();" in guest_probe
+assert "MBMHFastRefreshNowPlaying();" in guest_probe
+assert "scheduledTimerWithTimeInterval:0.5" in guest_probe
+assert "Fast Music Haptics sync enabled (0.5s checks)" in guest_probe
+assert 'MBMHEnabled()' in guest_official
+assert "static void MBMHFastRefreshNowPlaying(void)" in guest_official
+assert "if (now - gMBMHLastWriteAt < 1.0) return;" in guest_official
+assert "if (now - gMBMHLastWriteAt < 12.0) return;" not in guest_official
+assert "gMBMHLastInsertionLogAt" in guest_official
+assert "now - gMBMHLastInsertionLogAt >= 20.0" in guest_official
+assert "MBMHInspectCurrentSong(info, title, artist, isrc);" in guest_official
 assert "MBMHCheckISRCs(" in guest_official
 assert "MBMHSearchRecording(" in guest_official
 assert "MBMHApplyVerifiedISRC(" in guest_official
