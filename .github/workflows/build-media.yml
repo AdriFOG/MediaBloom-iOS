@@ -93,10 +93,10 @@ jobs:
       - name: Validate tag compatibility, near-invisible glass, cached covers and shuffled recommendations
         run: python3 ../media-tools/tests/test_final_polish.py
 
-      - name: Enable Apple Music Haptics declaration and tactile diagnostics (MediaBloom only)
+      - name: Enable Apple Music Haptics declaration and guest ISRC experiment (MediaBloom only)
         run: python3 ../media-tools/scripts/apply_haptics_probe.py
 
-      - name: Validate honest music-haptics readiness and noninvasive hardware test
+      - name: Validate Apple Music Haptics guest integration and opt-in safety
         run: python3 ../media-tools/tests/test_haptics_probe.py
 
       - name: Swift syntax check of responsive UI sources
@@ -253,3 +253,60 @@ jobs:
             - MediaBloom conserva identificador propio (com.kdt.BloomBoxMedia) y no reemplaza BloomBox.
             - Para compartir aplicaciones entre ambos, deben usar el mismo App Group autorizado.
             - Algunas portadas o canciones podrían faltar si los catálogos públicos no las contienen. BloomAudio continúa siendo opcional y experimental.
+
+  publish-v201:
+    name: Publish MediaBloom v2.0.1
+    # Publish only a successful build of the explicit release commit on main.
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      startsWith(github.event.head_commit.message, 'release: MediaBloom v2.0.1')
+    needs: build-media
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated MediaBloom standalone IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: MediaBloom-SideStore-unsigned.ipa
+          path: release
+
+      - name: Verify IPA and generate SHA-256 checksum
+        run: |
+          set -euo pipefail
+          test -s release/MediaBloom-SideStore-unsigned.ipa
+          unzip -t release/MediaBloom-SideStore-unsigned.ipa | tail -n 2
+          (cd release && sha256sum MediaBloom-SideStore-unsigned.ipa > SHA256SUMS.txt)
+          cat release/SHA256SUMS.txt
+
+      - name: Publish MediaBloom v2.0.1
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.1
+          name: "MediaBloom 2.0.1 — Meet Bloom"
+          target_commitish: ${{ github.sha }}
+          prerelease: false
+          draft: false
+          make_latest: true
+          fail_on_unmatched_files: true
+          files: |
+            release/MediaBloom-SideStore-unsigned.ipa
+            release/SHA256SUMS.txt
+          body: |
+            ## MediaBloom 2.0.1 — Meet Bloom 🎧
+
+            - New MediaBloom app icon featuring Bloom with headphones, closed eyes and musical notes.
+            - Native layered icon with support for light, dark, tinted and Liquid Glass appearances on supported iOS versions.
+            - Legacy icon fallbacks for older iOS versions.
+            - Existing MediaBloom 2.0 features, independent app identity and shared media labels are preserved.
+            - The unsigned standalone IPA is intended for signing and installation with SideStore or a compatible signer. It does not replace BloomBox.
+
+            ## Español
+
+            - Nuevo icono de Bloom con audífonos, ojos cerrados y notas musicales.
+            - Icono por capas compatible con las apariencias normal, oscura, tintada y Liquid Glass en versiones de iOS compatibles.
+            - Iconos de respaldo para versiones anteriores de iOS.
+            - Se conservan las funciones de MediaBloom 2.0 y su instalación independiente de BloomBox.
+
+            Spotify playback is unchanged; this update focuses on the new app icon.

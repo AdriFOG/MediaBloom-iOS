@@ -1,0 +1,307 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "linear-gradient": [
+          "extended-srgb:0.78039,0.48235,0.96471,1.00000",
+          "extended-srgb:0.32157,0.04314,0.91373,1.00000"
+        ],
+        "orientation": {
+          "start": {
+            "x": 0,
+            "y": 1
+          },
+          "stop": {
+            "x": 1,
+            "y": 0
+          }
+        }
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": "system-dark"
+    }
+  ],
+  "groups": [
+    {
+      "layers": [
+        {
+          "name": "Notas musicales",
+          "image-name": "10_Notas.svg",
+          "hidden": false,
+          "glass": true,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-srgb:1.00000,1.00000,1.00000,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "lighting": "individual",
+      "specular": true,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.07
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.18
+      }
+    },
+    {
+      "layers": [
+        {
+          "name": "Símbolo Play",
+          "image-name": "09_Play.svg",
+          "hidden": false,
+          "glass": false,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-srgb:1.00000,1.00000,1.00000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ojos cerrados",
+          "image-name": "08_Ojos.svg",
+          "hidden": false,
+          "glass": false,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-srgb:0.12000,0.12000,0.12000,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "lighting": "individual",
+      "specular": false,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    },
+    {
+      "layers": [
+        {
+          "name": "Auricular derecho",
+          "image-name": "07_Auricular_derecho.svg",
+          "hidden": false,
+          "glass": true,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-srgb:0.30000,0.30000,0.30000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Oreja derecha",
+          "image-name": "06_Oreja_derecha.svg",
+          "hidden": false,
+          "glass": true,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-srgb:0.73000,0.73000,0.73000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Carita",
+          "image-name": "05_Carita.svg",
+          "hidden": false,
+          "glass": true,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-srgb:1.00000,1.00000,1.00000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Auricular izquierdo",
+          "image-name": "04_Auricular_izquierdo.svg",
+          "hidden": false,
+          "glass": true,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-srgb:0.30000,0.30000,0.30000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Diadema",
+          "image-name": "03_Diadema.svg",
+          "hidden": false,
+          "glass": true,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-srgb:0.23000,0.23000,0.23000,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "lighting": "individual",
+      "specular": true,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.07
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.18
+      }
+    },
+    {
+      "layers": [
+        {
+          "name": "Cuerpo verde",
+          "image-name": "02_Cuerpo_verde.svg",
+          "hidden": false,
+          "glass": true,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-srgb:0.69000,0.69000,0.69000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Oreja izquierda",
+          "image-name": "01_Oreja_izquierda.svg",
+          "hidden": false,
+          "glass": true,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-srgb:0.70000,0.70000,0.70000,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "lighting": "individual",
+      "specular": true,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.07
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.18
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}
