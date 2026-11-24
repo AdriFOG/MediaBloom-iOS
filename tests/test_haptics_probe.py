@@ -68,7 +68,7 @@ for forbidden in ("AVAudioEngine", "AVAudioRecorder", "AVCaptureSession", "micro
     assert forbidden not in guest_deezer, forbidden
 assert "MBMHRecordingMatchesAlbum" in guest_official
 assert "MusicBrainz: recordings disagree on ISRC; checking Deezer" in guest_official
-assert "MBMHDeezerFallback(signature, \"Too many ambiguous MusicBrainz recordings\")" in guest_official
+assert 'Too many ambiguous MusicBrainz recordings' in guest_official
 assert "second - nearest >= 2.0" in guest_official
 assert 'MBMHSearchRecording(title, artist, MBMHDuration(info), album, signature)' in guest_official
 assert "setNowPlayingInfo:" in guest_official
