@@ -18,6 +18,8 @@ static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
                                  NSString *artist, NSString *existingISRC);
 static void MBMHStartGuestObserver(void);
 static void MBMHFastRefreshNowPlaying(void);
+static void MBMHForceResync(void);
+static void MBMHUpdateGuestOverlay(void);
 
 static NSString *MBGuestStringSymbol(const char *symbolName) {
     NSString * const *address = (NSString * const *)dlsym(RTLD_DEFAULT, symbolName);
@@ -113,6 +115,7 @@ static void MBInstallGuestHapticsProbe(void) {
         MBGuestAppendHapticEvent(@"Guest probe loaded in YouTube Music");
         MBMHStartGuestObserver();
         MBGuestInspectNowPlaying();
+        MBMHUpdateGuestOverlay();
         // Music Haptics should not wait for the 2-second diagnostics heartbeat.
         // Fast tick only reads in-process metadata; it never captures audio.
         if ([shared boolForKey:@"MediaBloomHapticsAutoISRCV1"]) {
@@ -124,6 +127,7 @@ static void MBInstallGuestHapticsProbe(void) {
                     return;
                 }
                 MBMHFastRefreshNowPlaying();
+                MBMHUpdateGuestOverlay();
             }];
         }
         [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:YES block:^(NSTimer *timer) {
