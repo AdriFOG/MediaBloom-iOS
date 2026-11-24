@@ -32,6 +32,10 @@ def check(ipa: Path) -> None:
         assert app_id not in DISALLOWED_IDS
         assert info.get("CFBundleDisplayName") == "BloomBox Media"
         assert info.get("BloomBoxMediaEdition") is True
+        primary = info.get("CFBundleIcons", {}).get("CFBundlePrimaryIcon", {})
+        assert primary.get("CFBundleIconName") == "AppIcon", "Native MediaBloom primary icon is absent"
+        assert HOST + "Assets.car" in names and archive.getinfo(HOST + "Assets.car").file_size > 0, "Missing compiled native asset catalog"
+
         assert info.get("LSApplicationCategoryType") == "public.app-category.entertainment"
         assert not info.get("GCSupportsGameMode", False)
         schemes = info["CFBundleURLTypes"][0]["CFBundleURLSchemes"]
