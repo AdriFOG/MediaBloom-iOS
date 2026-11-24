@@ -12,6 +12,7 @@ static NSString * const kMBMHCacheKey = @"MediaBloomHapticsVerifiedISRCV1";
 static NSString *gMBMHSongSignature = nil;
 static NSString *gMBMHVerifiedISRC = nil;
 static NSTimeInterval gMBMHLastWriteAt = 0;
+static NSTimeInterval gMBMHLastInsertionLogAt = 0;
 static NSTimeInterval gMBMHNextRequestAt = 0;
 static id gMBMHObserverToken = nil;
 static NSString *gMBMHLastHapticStatus = nil;
@@ -221,7 +222,10 @@ static void MBMHApplyVerifiedISRC(NSString *code, NSString *signature) {
     if (@available(iOS 18.0, *)) { /* supported */ } else { return; }
     if (!MBMHStillCurrent(signature) || !MBMHSystemEnabled()) return;
     NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
-    if (now - gMBMHLastWriteAt < 12.0) return;
+    // The old 12-second lockout caused gaps whenever YouTube Music erased
+    // the injected ISRC. Re-check after 1 second; never change the original
+    // recording code or any playback controls.
+    if (now - gMBMHLastWriteAt < 1.0) return;
     id center = MBMHNowPlayingCenter();
     NSDictionary *info = MBMHNowPlayingInfo();
     NSString *title = MBGuestString(info, MBGuestStringSymbol("MPMediaItemPropertyTitle"));
@@ -241,9 +245,14 @@ static void MBMHApplyVerifiedISRC(NSString *code, NSString *signature) {
     modified[key] = code; // Preserve ALL other YouTube Music Now Playing fields.
     gMBMHLastWriteAt = now;
     ((void (*)(id, SEL, id))objc_msgSend)(center, setter, modified);
-    MBGuestAppendHapticEvent([NSString stringWithFormat:
-        @"Official Music Haptics test: ISRC %@ added to active Now Playing (not yet confirmed)",
-        code]);
+    // Frequent guest metadata updates can require repeated restoration.
+    // Avoid filling the saved log every time the same ISRC is restored.
+    if (gMBMHLastInsertionLogAt == 0 || now - gMBMHLastInsertionLogAt >= 20.0) {
+        gMBMHLastInsertionLogAt = now;
+        MBGuestAppendHapticEvent([NSString stringWithFormat:
+            @"Fast Music Haptics: ISRC %@ supplied to Now Playing (Apple confirmation pending)",
+            code]);
+    }
 }
 
 static void MBMHSaveVerifiedISRC(NSString *signature, NSString *code) {
@@ -543,6 +552,7 @@ static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
     gMBMHSongSignature = [signature copy];
     gMBMHVerifiedISRC = nil;
     gMBMHLastWriteAt = 0;
+    gMBMHLastInsertionLogAt = 0;
     gMBMHCurrentTitle = [title copy];
     gMBMHCurrentArtist = [artist copy];
     gMBMHCurrentAlbum = MBGuestString(info, MBGuestStringSymbol("MPMediaItemPropertyAlbumTitle"));
@@ -563,4 +573,20 @@ static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
     }
     NSString *album = MBGuestString(info, MBGuestStringSymbol("MPMediaItemPropertyAlbumTitle"));
     MBMHSearchRecording(title, artist, MBMHDuration(info), album, signature);
+}
+
+
+// Lightweight fast path: no polling of MusicBrainz/Deezer here. An already
+// verified ISRC is restored promptly if YouTube Music republishes metadata.
+// Missing new songs still enter the existing bounded lookup only once.
+static void MBMHFastRefreshNowPlaying(void) {
+    if (!MBMHEnabled()) return;
+    NSDictionary *info = MBMHNowPlayingInfo();
+    if (![info isKindOfClass:NSDictionary.class] || info.count == 0) return;
+    NSString *title = MBGuestString(info, MBGuestStringSymbol("MPMediaItemPropertyTitle"));
+    NSString *artist = MBGuestString(info, MBGuestStringSymbol("MPMediaItemPropertyArtist"));
+    if (title.length == 0 || artist.length == 0) return;
+    NSString *isrc = MBGuestString(info,
+        MBGuestStringSymbol("MPNowPlayingInfoPropertyInternationalStandardRecordingCode"));
+    MBMHInspectCurrentSong(info, title, artist, isrc);
 }
