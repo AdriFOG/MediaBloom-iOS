@@ -19,6 +19,8 @@ static NSString *gMBMHSongSignature = nil;
 static NSString *gMBMHVerifiedISRC = nil;
 static NSTimeInterval gMBMHLastWriteAt = 0;
 static NSTimeInterval gMBMHLastInsertionLogAt = 0;
+static NSTimeInterval gMBMHLastResyncRequestAt = 0;
+static NSTimeInterval gMBMHLastAutoResyncAt = 0;
 static NSTimeInterval gMBMHNextRequestAt = 0;
 static id gMBMHObserverToken = nil;
 static NSString *gMBMHLastHapticStatus = nil;
@@ -53,6 +55,7 @@ static void MBMHSetStatus(NSString *state, NSString *detail, NSString *signature
     [shared setObject:song forKey:kMBMHStatusSongKey];
     [shared setObject:NSDate.date forKey:kMBMHStatusDateKey];
     [shared synchronize];
+    MBMHUpdateGuestOverlay();
 }
 
 // The Apple catalog can change. A rejection is temporary (12 hours), scoped
@@ -209,6 +212,29 @@ static void MBMHStartGuestObserver(void) {
                              playing ? @"iOS confirmed synchronized playback" :
                                        @"Apple playback stopped; track is compatible",
                              gMBMHSongSignature);
+                if (!playing) {
+                    NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
+                    // A network stall can stop the haptic stream while audio
+                    // continues. Retry only if player still reports playback.
+                    if (now - gMBMHLastAutoResyncAt >= 20.0) {
+                        gMBMHLastAutoResyncAt = now;
+                        NSString *expected = [gMBMHSongSignature copy];
+                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                            (int64_t)(2.0 * NSEC_PER_SEC)),
+                            dispatch_get_main_queue(), ^{
+                            if (!MBMHStillCurrent(expected)) return;
+                            NSDictionary *playingInfo = MBMHNowPlayingInfo();
+                            NSString *rateKey = MBGuestStringSymbol(
+                                "MPNowPlayingInfoPropertyPlaybackRate");
+                            id rate = rateKey.length ? playingInfo[rateKey] : nil;
+                            if (![rate respondsToSelector:@selector(doubleValue)] ||
+                                [rate doubleValue] <= 0) return;
+                            if ([[NSUserDefaults.lcSharedDefaults stringForKey:kMBMHStatusKey]
+                                 isEqualToString:@"playing"]) return;
+                            MBMHForceResync();
+                        });
+                    }
+                }
             }
         });
     };
@@ -682,4 +708,66 @@ static void MBMHFastRefreshNowPlaying(void) {
     NSString *isrc = MBGuestString(info,
         MBGuestStringSymbol("MPNowPlayingInfoPropertyInternationalStandardRecordingCode"));
     MBMHInspectCurrentSong(info, title, artist, isrc);
+}
+
+
+// Safe best-effort resync: republish ONLY the current song metadata (including
+// the original elapsed time/rate) so iOS can re-evaluate its Music Haptics
+// session. Apple's API does not support preloading or controlling the haptic
+// download, so this does not claim the audio and haptics are forcibly aligned.
+static void MBMHForceResync(void) {
+    if (!MBMHEnabled()) return;
+    NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
+    if (now - gMBMHLastResyncRequestAt < 5.0) return;
+    gMBMHLastResyncRequestAt = now;
+    MBMHFastRefreshNowPlaying();
+    NSString *code = gMBMHVerifiedISRC;
+    NSString *signature = [gMBMHSongSignature copy];
+    if (!MBMHValidISRC(code) || !MBMHStillCurrent(signature)) {
+        MBMHSetStatus(@"searching", @"Identificando pista antes de resincronizar",
+                      signature);
+        MBGuestAppendHapticEvent(@"Resync requested: waiting for verified ISRC");
+        return;
+    }
+    NSDictionary *info = MBMHNowPlayingInfo();
+    if (!info || ![MBMHSignature(MBGuestString(info,
+                    MBGuestStringSymbol("MPMediaItemPropertyTitle")),
+                    MBGuestString(info,
+                    MBGuestStringSymbol("MPMediaItemPropertyArtist")),
+                    info) isEqualToString:signature]) return;
+    NSString *rateKey = MBGuestStringSymbol("MPNowPlayingInfoPropertyPlaybackRate");
+    id rate = rateKey.length ? info[rateKey] : nil;
+    if ([rate respondsToSelector:@selector(doubleValue)] &&
+        [rate doubleValue] <= 0) {
+        MBMHSetStatus(@"ready", @"Reproducción pausada; no es necesario resincronizar",
+                      signature);
+        return;
+    }
+    NSString *codeKey = MBGuestStringSymbol(
+        "MPNowPlayingInfoPropertyInternationalStandardRecordingCode");
+    if (!codeKey.length) return;
+    NSString *existing = MBGuestString(info, codeKey);
+    if (existing.length > 0 && ![existing isEqualToString:code]) return;
+    id center = MBMHNowPlayingCenter();
+    SEL setter = NSSelectorFromString(@"setNowPlayingInfo:");
+    if (!center || ![center respondsToSelector:setter]) return;
+    NSMutableDictionary *copy = [info mutableCopy];
+    copy[codeKey] = code;
+    // Keep MPNowPlayingInfoPropertyElapsedPlaybackTime and PlaybackRate
+    // unchanged. Never seek, restart, pause, or call playback commands.
+    ((void (*)(id, SEL, id))objc_msgSend)(center, setter, copy);
+    gMBMHLastWriteAt = now;
+    MBMHSetStatus(@"resyncing", @"Revalidando vibraciones con iOS…", signature);
+    MBGuestAppendHapticEvent([NSString stringWithFormat:
+        @"Resync requested for ISRC %@ (playback position preserved)", code]);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+        (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (!MBMHStillCurrent(signature)) return;
+        if ([[NSUserDefaults.lcSharedDefaults stringForKey:kMBMHStatusKey]
+             isEqualToString:@"resyncing"]) {
+            MBMHSetStatus(@"ready",
+                @"iOS no confirmó la nueva sincronización; pulsa ↻ para reintentar",
+                signature);
+        }
+    });
 }
