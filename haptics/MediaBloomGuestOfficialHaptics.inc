@@ -73,10 +73,13 @@ static NSTimeInterval MBMHDuration(NSDictionary *info) {
 }
 
 static NSString *MBMHSignature(NSString *title, NSString *artist, NSDictionary *info) {
-    // The duration distinguishes studio originals from remixes/live recordings.
-    NSInteger seconds = (NSInteger)llround(MBMHDuration(info));
-    return [NSString stringWithFormat:@"%@|%@|%ld",
-        MBMHNormalized(title), MBMHNormalized(artist), (long)seconds];
+    // YouTube Music can update playback duration by several seconds while
+    // a track starts. Duration is useful for matching, but NOT as a song key:
+    // using it here sent repeated MusicBrainz queries for a single song.
+    NSString *album = MBGuestString(info,
+        MBGuestStringSymbol("MPMediaItemPropertyAlbumTitle"));
+    return [NSString stringWithFormat:@"%@|%@|%@",
+        MBMHNormalized(title), MBMHNormalized(artist), MBMHNormalized(album)];
 }
 
 static BOOL MBMHStillCurrent(NSString *signature) {
