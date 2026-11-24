@@ -55,6 +55,38 @@ def main() -> None:
         "com.kdt.livecontainer.LiveWidget",
         IDENTIFIER + ".LiveWidget",
     )
+
+    # The pinned LC packaging script historically swallows failed commands.
+    # In particular, a CPU-incompatible dylibify can remove SideStore's
+    # executable yet still produce a ZIP that passes a basic archive check.
+    # Add fail-fast checks *only* in the temporary MediaBloom checkout.
+    packaging = ROOT / ".github/build_github.sh"
+    script = packaging.read_text()
+    if "set -eu\n" not in script:
+        script = "set -eu\n" + script
+    script = script.replace(
+        "rm -r .zsign_cache\n",
+        "rm -rf .zsign_cache\n",
+    )
+    script = script.replace(
+        'find payloadlc/Payload -type d -name "_CodeSignature" -exec rm -r {} +',
+        'if [ -d payloadlc/Payload ]; then\n'
+        '  find payloadlc/Payload -type d -name "_CodeSignature" -exec rm -r {} +\n'
+        'fi',
+    )
+    hook = 'ldid -S"" ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore\n'
+    if script.count(hook) != 1:
+        raise RuntimeError("Could not find SideStore executable signing step")
+    script = script.replace(
+        hook,
+        hook +
+        'test -s ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore || '
+        '{ echo "MediaBloom: missing SideStore executable; packaging aborted" >&2; exit 1; }\n'
+        'file ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore '
+        '| grep -q "Mach-O" || '
+        '{ echo "MediaBloom: SideStore is not a Mach-O executable" >&2; exit 1; }\n',
+    )
+    packaging.write_text(script)
     rewrite(
         ".github/sidelc/LiveWidgetExtension_adhoc.xml",
         "com.kdt.livecontainer.LiveWidget",

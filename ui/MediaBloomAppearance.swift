@@ -181,6 +181,9 @@ struct MediaBloomAppearanceSheet: View {
     @State private var showFiles = false
     @State private var hasWallpaper = false
     @State private var imageError = false
+    @StateObject private var haptics = MBHapticsDiagnostic.shared
+    @AppStorage("MediaBloomHapticsAutoISRCV1", store: LCUtils.appGroupUserDefault)
+    private var automaticMusicHaptics = false
 
     private var english: Bool {
         language == "en" || (language == "system" &&
@@ -196,6 +199,7 @@ struct MediaBloomAppearanceSheet: View {
                 glassSection
                 mediaTagsSection
                 audioSection
+                hapticsSection
                 advancedSection
             }
             .navigationTitle(t("Apariencia", "Appearance"))
@@ -205,7 +209,13 @@ struct MediaBloomAppearanceSheet: View {
                     Button(t("Listo", "Done")) { dismiss() }
                 }
             }
-            .onAppear { hasWallpaper = MBWallpaperStore.load() != nil }
+            .onAppear {
+                hasWallpaper = MBWallpaperStore.load() != nil
+                haptics.beginObservation(english: english)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                haptics.refresh(english: english)
+            }
             .sheet(isPresented: $showPhotos) {
                 MBPhotosSelection { image in saveWallpaper(image) }
             }
@@ -322,6 +332,139 @@ struct MediaBloomAppearanceSheet: View {
             Text(t("Después de activarlo, vuelve a abrir las apps multimedia. El volumen general se combina con el volumen individual.",
                    "Reopen media apps after enabling. Master and individual gain combine."))
                 .font(.footnote).foregroundColor(.secondary)
+        }
+    }
+
+    private var hapticsSection: some View {
+        Section(header: Text(t("Música háptica · Prueba", "Music Haptics · Test"))) {
+            HStack(spacing: 10) {
+                Image(systemName: haptics.hardwareAvailable ? "waveform" : "waveform.slash")
+                    .foregroundColor(haptics.hardwareAvailable ? .green : .secondary)
+                Text(haptics.hardwareAvailable
+                     ? t("Motor de vibración disponible", "Haptic engine available")
+                     : t("Motor de vibración no disponible", "Haptic engine unavailable"))
+            }
+            if let active = haptics.officialActive {
+                Label(active
+                      ? t("Music Haptics de iOS: activado", "iOS Music Haptics: enabled")
+                      : t("Music Haptics de iOS: desactivado", "iOS Music Haptics: disabled"),
+                      systemImage: active ? "checkmark.circle" : "circle")
+            } else {
+                Text(t("La función oficial requiere iOS 18 o posterior.",
+                       "Apple Music Haptics requires iOS 18 or later."))
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            Text(haptics.nowPlayingSummary)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(haptics.metadataStatus)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Label(haptics.playbackSummary, systemImage: "waveform.path.ecg")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                if haptics.captureActive {
+                    haptics.stopCapture(english: english)
+                } else {
+                    haptics.startCapture(english: english)
+                }
+            } label: {
+                Label(haptics.captureActive
+                      ? t("Detener registro", "Stop capture")
+                      : t("Iniciar registro para YouTube Music", "Start YouTube Music capture"),
+                      systemImage: haptics.captureActive ? "stop.circle.fill" : "record.circle")
+            }
+            Toggle(isOn: $automaticMusicHaptics) {
+                Label(t("Probar Music Haptics automático",
+                        "Try automatic Apple Music Haptics"), systemImage: "waveform")
+            }
+            .disabled(!haptics.hardwareAvailable)
+            Text(t("Experimental: busca la grabación exacta con MusicBrainz y solo añade su ISRC cuando Apple confirma una pista háptica. Activa también el registro y vuelve a abrir YouTube Music.",
+                   "Experimental: looks up the exact recording in MusicBrainz and adds its ISRC only when Apple reports a haptic track. Also start capture and reopen YouTube Music."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if haptics.guestSamples > 0 || !haptics.guestEvents.isEmpty {
+                Label(t("Diagnóstico desde YouTube Music", "YouTube Music guest diagnostic"),
+                      systemImage: "waveform.path.ecg")
+                    .font(.subheadline.weight(.semibold))
+                Text(t("Lecturas dentro del reproductor: ", "Samples inside player: ")
+                     + "\(haptics.guestSamples)")
+                    .font(.footnote.monospacedDigit())
+                if !haptics.guestLastSample.isEmpty {
+                    Text(t("Última lectura del reproductor: ", "Last guest sample: ")
+                         + haptics.guestLastSample)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+                Text(haptics.guestEvents.suffix(12).joined(separator: "\n"))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(t("Sin lecturas desde YouTube Music. Inicia el registro y abre el reproductor desde MediaBloom.",
+                       "No in-guest data yet. Start capture, then open YouTube Music from MediaBloom."))
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            if !haptics.lastSample.isEmpty {
+                Text(t("Última revisión del launcher: ", "Last launcher sample: ") + haptics.lastSample
+                     + " (\(haptics.sampleCount))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            if !haptics.recordedEvents.isEmpty || !haptics.guestEvents.isEmpty {
+                Text(t("Registro conservado después de cerrar MediaBloom", "Log preserved across force-close"))
+                    .font(.footnote.weight(.semibold))
+                Text(haptics.recordedEvents.suffix(8).joined(separator: "\n"))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    UIPasteboard.general.string = (haptics.guestEvents
+                        + haptics.recordedEvents).joined(separator: "\n")
+                } label: {
+                    Label(t("Copiar registro", "Copy log"), systemImage: "doc.on.doc")
+                }
+                Button(role: .destructive) {
+                    haptics.clearCapture()
+                } label: {
+                    Label(t("Borrar registro", "Clear log"), systemImage: "trash")
+                }
+            }
+            Text(t("El tweak revisa los datos de YouTube Music cada 2 segundos. No graba audio ni usa el micrófono. El modo automático consulta MusicBrainz por internet; solo iOS puede confirmar vibraciones sincronizadas.",
+                   "The guest tweak checks YouTube Music every 2 seconds. No audio recording or microphone. Auto mode queries MusicBrainz online; only iOS can confirm synchronized haptics."))
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Button {
+                haptics.testHardware(english: english)
+            } label: {
+                Label(t("Probar 3 vibraciones", "Test 3 haptic taps"),
+                      systemImage: "waveform.path")
+            }
+            .disabled(!haptics.hardwareAvailable)
+            if !haptics.testResult.isEmpty {
+                Text(haptics.testResult)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            Button {
+                haptics.refresh(english: english)
+            } label: {
+                Label(t("Volver a comprobar", "Check again"), systemImage: "arrow.clockwise")
+            }
+            Text(t("Activa el registro, abre YouTube Music desde MediaBloom y reproduce una canción. Luego cierra MediaBloom y vuelve a abrirlo: revisa la sección 'Diagnóstico desde YouTube Music' y copia el registro. Un ISRC ausente no demuestra que la canción carezca de haptics.",
+                   "Start capture, open YouTube Music inside MediaBloom and play a song. Then force-close and reopen MediaBloom: check the in-guest diagnostic and copy the log. A missing ISRC does not prove the song has no haptic track."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
