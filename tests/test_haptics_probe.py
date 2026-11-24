@@ -71,6 +71,35 @@ assert "https://api.deezer.com/track/" in guest_deezer
 assert "MBMHDZTrackMatches" in guest_deezer
 assert "MBMHDZCollaboratorsMatch" in guest_deezer
 assert "MBMHDZCheckCandidates" in guest_deezer
+# Version-aware matching: only exact titles (including version suffixes) and
+# album-mismatched copies with closely matching duration + shared ISRC.
+assert "MBMHDZTrackMatchesMode" in guest_deezer
+assert 'fabs([duration doubleValue] - gMBMHCurrentDuration) > 2.0' in guest_deezer
+assert "alternateRelease && candidates.count < 2" in guest_deezer
+assert "same-version alternate-release" in guest_deezer
+assert "MBMHDZCheckCandidates(candidates, 0, nil, signature, alternateRelease)" in guest_deezer
+assert '[NSURLQueryItem queryItemWithName:@"limit" value:@"50"]' in guest_deezer
+assert "title_short" in guest_deezer
+# Apple negative responses are cached by exact ISRC, never by song title,
+# and expire after twelve hours so catalog additions can be retried.
+assert "MediaBloomHapticsRejectedISRCV1" in guest_official
+assert "MBMHIsRejectedISRC" in guest_official
+assert "MBMHRememberRejectedISRC(code)" in guest_official
+assert "12.0 * 3600.0" in guest_official
+assert "MBMHCheckISRCs(codes, index + 1, signature)" in guest_official
+# Expose only the last recorded state after the guest has been closed; don't
+# claim that playback is still running in the launcher.
+assert "MediaBloomHapticsStatusV1" in guest_official
+assert 'MBMHSetStatus(@"playing"' not in guest_official or "playing ? @\"playing\"" in guest_official
+assert 'MBMHSetStatus(@"searching"' in guest_official
+assert 'MBMHSetStatus(@"checking"' in guest_official
+assert 'MBMHSetStatus(@"unavailable"' in guest_official
+assert "MediaBloomHapticsStatusV1" in source
+assert "guestHapticsLabel(english:" in appearance
+assert "haptics.guestHapticsSymbol" in appearance
+assert "Último resultado de Music Haptics" in appearance
+assert "haptics.retryRejectedISRCs()" in appearance
+assert "haptics.guestRejectedCount" in appearance
 assert "MBMHCheckISRCs(@[commonCode], 0, signature)" in guest_deezer
 assert "candidates.count > 5" in guest_deezer
 assert "fabs(" in guest_deezer
