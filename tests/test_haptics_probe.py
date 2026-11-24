@@ -29,6 +29,7 @@ assert "UserDefaults.standard.synchronize()" in source
 assert "Apple Music Haptics ACTIVE" in source
 guest_probe = Path("../media-tools/haptics/MediaBloomGuestNowPlayingProbe.inc").read_text()
 guest_official = Path("../media-tools/haptics/MediaBloomGuestOfficialHaptics.inc").read_text()
+guest_deezer = Path("../media-tools/haptics/MediaBloomGuestDeezerFallback.inc").read_text()
 assert "MBInstallGuestHapticsProbe();" in ui or "MBInstallGuestHapticsProbe();" in Path("TweakLoader/TweakLoader.m").read_text()
 loader = Path("TweakLoader/TweakLoader.m").read_text()
 assert 'com.google.ios.youtubemusic' in guest_probe
@@ -49,6 +50,22 @@ assert "MBMHRequestJSONAttempt" in guest_official
 assert "MusicBrainz request failed:" in guest_official
 assert "retry %lu/2" in guest_official
 assert "MBMHLookupSharedISRCs" in guest_official
+assert "MBMHDeezerFallback" in guest_official
+assert "MusicBrainz HTTP 503; using Deezer" in guest_official
+assert "gMBMHMusicBrainzCooldownUntil" in guest_official
+assert "guest_deezer" in Path("../media-tools/scripts/apply_haptics_probe.py").read_text()
+assert "https://api.deezer.com/search" in guest_deezer
+assert "https://api.deezer.com/track/" in guest_deezer
+assert "MBMHDZTrackMatches" in guest_deezer
+assert "MBMHDZCollaboratorsMatch" in guest_deezer
+assert "MBMHDZCheckCandidates" in guest_deezer
+assert "MBMHCheckISRCs(@[commonCode], 0, signature)" in guest_deezer
+assert "candidates.count > 5" in guest_deezer
+assert "fabs(" in guest_deezer
+assert "different ISRCs; nothing inserted" in guest_deezer
+for forbidden in ("AVAudioEngine", "AVAudioRecorder", "AVCaptureSession", "microphone",
+                  "setNowPlayingInfo:", "isrc = @", "lyrics", "preview"):
+    assert forbidden not in guest_deezer, forbidden
 assert "MBMHRecordingMatchesAlbum" in guest_official
 assert "different recordings have no common ISRC" in guest_official
 assert "no unsafe ISRC guess" in guest_official
