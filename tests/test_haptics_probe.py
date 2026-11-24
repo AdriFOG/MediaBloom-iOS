@@ -53,6 +53,8 @@ assert "MBMHLookupSharedISRCs" in guest_official
 assert "MBMHDeezerFallback" in guest_official
 assert "MusicBrainz HTTP 503; using Deezer" in guest_official
 assert "gMBMHMusicBrainzCooldownUntil" in guest_official
+assert "MBMHNormalized(album)" in guest_official
+assert "llround(MBMHDuration(info))" not in guest_official
 assert "guest_deezer" in Path("../media-tools/scripts/apply_haptics_probe.py").read_text()
 assert "https://api.deezer.com/search" in guest_deezer
 assert "https://api.deezer.com/track/" in guest_deezer
