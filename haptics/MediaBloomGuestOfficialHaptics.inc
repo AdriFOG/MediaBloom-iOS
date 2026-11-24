@@ -394,18 +394,20 @@ static NSURL *MBMHSearchURL(NSString *title, NSString *artist) {
 }
 
 static void MBMHSearchRecording(NSString *title, NSString *artist,
-                              NSTimeInterval duration, NSString *signature) {
+                              NSTimeInterval duration, NSString *album,
+                              NSString *signature) {
     NSURL *url = MBMHSearchURL(title, artist);
     MBGuestAppendHapticEvent([NSString stringWithFormat:
-        @"MusicBrainz: searching exact %@ — %@", title, artist]);
+        @"MusicBrainz: searching %@ — %@%@", title, artist,
+        duration > 30 ? [NSString stringWithFormat:@" (%.0fs)", duration] : @""]);
     MBMHRequestJSON(url, ^(NSDictionary *response) {
         if (!MBMHStillCurrent(signature)) return;
         NSArray *recordings = response[@"recordings"];
         if (![recordings isKindOfClass:NSArray.class]) {
-            MBGuestAppendHapticEvent(@"MusicBrainz search unavailable (no ISRC applied)");
+            MBGuestAppendHapticEvent(@"MusicBrainz unavailable; request details logged above");
             return;
         }
-        NSMutableArray<NSString *> *matches = [NSMutableArray array];
+        NSMutableArray<NSDictionary *> *matches = [NSMutableArray array];
         NSString *expectedTitle = MBMHNormalized(title);
         NSString *expectedArtist = MBMHNormalized(artist);
         for (id obj in recordings) {
@@ -415,20 +417,83 @@ static void MBMHSearchRecording(NSString *title, NSString *artist,
             if (![MBMHNormalized(entry[@"title"]) isEqualToString:expectedTitle]) continue;
             if (![MBMHNormalized(MBMHArtistCredit(entry)) isEqualToString:expectedArtist]) continue;
             NSNumber *milliseconds = entry[@"length"];
-            if (duration > 30 && [milliseconds respondsToSelector:@selector(doubleValue)] &&
-                milliseconds.doubleValue > 0 &&
-                fabs(milliseconds.doubleValue / 1000.0 - duration) > 8.0) continue;
+            BOOL hasLength = [milliseconds respondsToSelector:@selector(doubleValue)] &&
+                             milliseconds.doubleValue > 0;
+            NSTimeInterval difference = hasLength && duration > 30
+                ? fabs(milliseconds.doubleValue / 1000.0 - duration) : 100000.0;
+            if (duration > 30 && hasLength && difference > 8.0) continue;
             NSString *uuid = entry[@"id"];
-            if (![uuid isKindOfClass:NSString.class] || ![NSUUID.alloc initWithUUIDString:uuid]) continue;
-            if (![matches containsObject:uuid]) [matches addObject:uuid];
+            if (![uuid isKindOfClass:NSString.class] ||
+                ![[NSUUID alloc] initWithUUIDString:uuid]) continue;
+            BOOL duplicate = NO;
+            for (NSDictionary *seen in matches) {
+                if ([seen[@"id"] isEqualToString:uuid]) { duplicate = YES; break; }
+            }
+            if (duplicate) continue;
+            [matches addObject:@{
+                @"id": uuid,
+                @"durationDifference": @(difference),
+                @"hasLength": @(hasLength),
+                @"albumMatch": @(MBMHRecordingMatchesAlbum(entry, album))
+            }];
         }
-        if (matches.count != 1) {
-            MBGuestAppendHapticEvent([NSString stringWithFormat:
-                @"MusicBrainz match rejected: %lu exact recording(s); no ISRC inserted",
-                (unsigned long)matches.count]);
+        if (matches.count == 0) {
+            MBGuestAppendHapticEvent(@"MusicBrainz: no exact recording match; no ISRC inserted");
             return;
         }
-        MBMHLookupISRC(matches.firstObject, signature);
+        NSMutableArray<NSDictionary *> *candidates = [matches mutableCopy];
+        if (album.length > 0) {
+            NSMutableArray<NSDictionary *> *albumMatches = [NSMutableArray array];
+            for (NSDictionary *item in candidates) {
+                if ([item[@"albumMatch"] boolValue]) [albumMatches addObject:item];
+            }
+            if (albumMatches.count > 0) {
+                candidates = albumMatches;
+                MBGuestAppendHapticEvent([NSString stringWithFormat:
+                    @"MusicBrainz: album narrowed %lu to %lu recording(s)",
+                    (unsigned long)matches.count, (unsigned long)candidates.count]);
+            }
+        }
+        if (candidates.count == 1) {
+            MBMHLookupISRC(candidates[0][@"id"], signature);
+            return;
+        }
+        // Only use a duration to choose a particular recording when EVERY
+        // candidate has a measured duration and the nearest is clearly unique.
+        if (duration > 30) {
+            BOOL allHaveLength = YES;
+            for (NSDictionary *item in candidates) {
+                if (![item[@"hasLength"] boolValue]) { allHaveLength = NO; break; }
+            }
+            if (allHaveLength) {
+                NSArray<NSDictionary *> *ranked = [candidates sortedArrayUsingComparator:
+                    ^NSComparisonResult(NSDictionary *first, NSDictionary *second) {
+                        return [first[@"durationDifference"]
+                            compare:second[@"durationDifference"]];
+                    }];
+                double nearest = [ranked[0][@"durationDifference"] doubleValue];
+                double second = [ranked[1][@"durationDifference"] doubleValue];
+                if (nearest <= 1.5 && second - nearest >= 2.0) {
+                    MBGuestAppendHapticEvent([NSString stringWithFormat:
+                        @"MusicBrainz: unique duration match (%.1fs closer); checking Apple",
+                        second - nearest]);
+                    MBMHLookupISRC(ranked[0][@"id"], signature);
+                    return;
+                }
+            }
+        }
+        if (candidates.count > 5) {
+            MBGuestAppendHapticEvent([NSString stringWithFormat:
+                @"MusicBrainz: %lu ambiguous recordings; no unsafe ISRC guess",
+                (unsigned long)candidates.count]);
+            return;
+        }
+        NSMutableArray<NSString *> *ids = [NSMutableArray array];
+        for (NSDictionary *item in candidates) [ids addObject:item[@"id"]];
+        MBGuestAppendHapticEvent([NSString stringWithFormat:
+            @"MusicBrainz: comparing ISRCs from %lu candidate recordings",
+            (unsigned long)ids.count]);
+        MBMHLookupSharedISRCs(ids, 0, nil, signature);
     });
 }
 
@@ -461,5 +526,6 @@ static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
         MBMHApplyVerifiedISRC(cachedCode, signature);
         return;
     }
-    MBMHSearchRecording(title, artist, MBMHDuration(info), signature);
+    NSString *album = MBGuestString(info, MBGuestStringSymbol("MPMediaItemPropertyAlbumTitle"));
+    MBMHSearchRecording(title, artist, MBMHDuration(info), album, signature);
 }
