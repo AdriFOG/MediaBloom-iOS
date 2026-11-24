@@ -640,7 +640,6 @@ static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
     }
     gMBMHSongSignature = [signature copy];
     gMBMHVerifiedISRC = nil;
-    MBMHSetStatus(@"searching", @"Identifying exact recording and ISRC", signature);
     gMBMHLastWriteAt = 0;
     gMBMHLastInsertionLogAt = 0;
     gMBMHCurrentTitle = [title copy];
@@ -648,6 +647,7 @@ static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
     gMBMHCurrentAlbum = MBGuestString(info, MBGuestStringSymbol("MPMediaItemPropertyAlbumTitle"));
     gMBMHCurrentDuration = MBMHDuration(info);
     gMBMHDeezerAttemptedSignature = nil;
+    MBMHSetStatus(@"searching", @"Identifying exact recording and ISRC", signature);
     if (existingISRC.length) {
         MBGuestAppendHapticEvent(@"YouTube Music supplied an ISRC; no override necessary");
         MBMHSetStatus(@"ready", @"Player supplied its own ISRC", signature);
