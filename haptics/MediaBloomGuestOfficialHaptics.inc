@@ -292,32 +292,88 @@ static NSURL *MBMHRecordingLookupURL(NSString *uuid) {
         @"https://musicbrainz.org/ws/2/recording/%@?inc=isrcs&fmt=json", escaped]];
 }
 
+static NSArray<NSString *> *MBMHValidCodesFromRecording(NSDictionary *detail) {
+    NSArray *raw = [detail isKindOfClass:NSDictionary.class] ? detail[@"isrcs"] : nil;
+    if (![raw isKindOfClass:NSArray.class]) return @[];
+    NSMutableOrderedSet<NSString *> *codes = [NSMutableOrderedSet orderedSet];
+    for (id item in raw) {
+        if (![item isKindOfClass:NSString.class]) continue;
+        NSString *code = [item uppercaseString];
+        if (MBMHValidISRC(code)) [codes addObject:code];
+    }
+    return [codes.array sortedArrayUsingSelector:@selector(compare:)];
+}
+
 static void MBMHLookupISRC(NSString *recordingID, NSString *signature) {
-    NSURL *url = MBMHRecordingLookupURL(recordingID);
-    MBMHRequestJSON(url, ^(NSDictionary *detail) {
+    MBMHRequestJSON(MBMHRecordingLookupURL(recordingID), ^(NSDictionary *detail) {
         if (!MBMHStillCurrent(signature)) return;
-        NSArray *raw = detail[@"isrcs"];
-        if (![raw isKindOfClass:NSArray.class]) {
-            MBGuestAppendHapticEvent(@"No ISRC listed for the exact MusicBrainz recording");
-            return;
-        }
-        NSMutableArray<NSString *> *codes = [NSMutableArray array];
-        for (id item in raw) {
-            if (![item isKindOfClass:NSString.class]) continue;
-            NSString *code = [item uppercaseString];
-            if (!MBMHValidISRC(code) || [codes containsObject:code]) continue;
-            [codes addObject:code];
-            if (codes.count == 3) break; // Bounded Apple availability calls.
-        }
+        NSArray<NSString *> *codes = MBMHValidCodesFromRecording(detail);
         if (codes.count == 0) {
-            MBGuestAppendHapticEvent(@"No usable ISRC in MusicBrainz recording");
+            MBGuestAppendHapticEvent(@"No verified ISRC found for exact MusicBrainz recording");
             return;
         }
+        NSArray<NSString *> *limited = [codes subarrayWithRange:
+            NSMakeRange(0, MIN((NSUInteger)3, codes.count))];
         MBGuestAppendHapticEvent([NSString stringWithFormat:
-            @"Matched recording; checking %lu ISRC(s) with Apple",
-            (unsigned long)codes.count]);
-        MBMHCheckISRCs(codes, 0, signature);
+            @"Matched unique recording; checking %lu ISRC(s) with Apple",
+            (unsigned long)limited.count]);
+        MBMHCheckISRCs(limited, 0, signature);
     });
+}
+
+// Some releases have distinct MusicBrainz recording IDs for the same actual
+// audio. Do not arbitrarily pick the first MBID when title/artist are equal:
+// use a code shared by EVERY plausible matching recording, or abort safely.
+static void MBMHLookupSharedISRCs(NSArray<NSString *> *ids, NSUInteger index,
+                                 NSSet<NSString *> *intersection, NSString *signature) {
+    if (!MBMHStillCurrent(signature)) return;
+    if (index == ids.count) {
+        NSArray<NSString *> *common = [[intersection allObjects]
+            sortedArrayUsingSelector:@selector(compare:)];
+        if (common.count == 0) {
+            MBGuestAppendHapticEvent(
+                @"MusicBrainz: different recordings have no common ISRC; nothing injected");
+            return;
+        }
+        NSArray<NSString *> *limited = [common subarrayWithRange:
+            NSMakeRange(0, MIN((NSUInteger)3, common.count))];
+        MBGuestAppendHapticEvent([NSString stringWithFormat:
+            @"%lu MusicBrainz recordings share %lu ISRC(s); checking Apple",
+            (unsigned long)ids.count, (unsigned long)limited.count]);
+        MBMHCheckISRCs(limited, 0, signature);
+        return;
+    }
+    MBMHRequestJSON(MBMHRecordingLookupURL(ids[index]), ^(NSDictionary *detail) {
+        if (!MBMHStillCurrent(signature)) return;
+        NSArray<NSString *> *codes = MBMHValidCodesFromRecording(detail);
+        if (codes.count == 0) {
+            MBGuestAppendHapticEvent(
+                @"Ambiguous MusicBrainz recordings: one lacks an ISRC; nothing injected");
+            return;
+        }
+        NSSet<NSString *> *available = [NSSet setWithArray:codes];
+        NSMutableSet<NSString *> *common = intersection ?
+            [intersection mutableCopy] : [available mutableCopy];
+        if (intersection) [common intersectSet:available];
+        if (common.count == 0) {
+            MBGuestAppendHapticEvent(
+                @"Ambiguous MusicBrainz recordings: ISRCs disagree; nothing injected");
+            return;
+        }
+        MBMHLookupSharedISRCs(ids, index + 1, common, signature);
+    });
+}
+
+static BOOL MBMHRecordingMatchesAlbum(NSDictionary *entry, NSString *album) {
+    if (album.length == 0) return NO;
+    NSArray *releases = entry[@"releases"];
+    if (![releases isKindOfClass:NSArray.class]) return NO;
+    NSString *expected = MBMHNormalized(album);
+    for (id candidate in releases) {
+        if (![candidate isKindOfClass:NSDictionary.class]) continue;
+        if ([MBMHNormalized(candidate[@"title"]) isEqualToString:expected]) return YES;
+    }
+    return NO;
 }
 
 static NSURL *MBMHSearchURL(NSString *title, NSString *artist) {
