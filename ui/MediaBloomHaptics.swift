@@ -26,6 +26,16 @@ final class MBHapticsDiagnostic: ObservableObject {
     @Published private(set) var guestEvents: [String] = []
     @Published private(set) var guestSamples = 0
     @Published private(set) var guestLastSample = ""
+    @Published private(set) var guestHapticsState = ""
+    @Published private(set) var guestHapticsDetail = ""
+    @Published private(set) var guestHapticsSong = ""
+    @Published private(set) var guestHapticsDate = ""
+    @Published private(set) var guestRejectedCount = 0
+    private let guestStateKey = "MediaBloomHapticsStatusV1"
+    private let guestDetailKey = "MediaBloomHapticsStatusDetailV1"
+    private let guestSongKey = "MediaBloomHapticsStatusSongV1"
+    private let guestDateKey = "MediaBloomHapticsStatusDateV1"
+    private let guestRejectedKey = "MediaBloomHapticsRejectedISRCV1"
     private let guestEnabledKey = "MediaBloomHapticsGuestCaptureV1"
     private let guestEventsKey = "MediaBloomHapticsGuestEventsV1"
     private let guestSamplesKey = "MediaBloomHapticsGuestSamplesV1"
@@ -56,12 +66,65 @@ final class MBHapticsDiagnostic: ObservableObject {
         shared.synchronize()
         guestEvents = shared.stringArray(forKey: guestEventsKey) ?? []
         guestSamples = shared.integer(forKey: guestSamplesKey)
+        guestHapticsState = shared.string(forKey: guestStateKey) ?? ""
+        guestHapticsDetail = shared.string(forKey: guestDetailKey) ?? ""
+        guestHapticsSong = shared.string(forKey: guestSongKey) ?? ""
+        if let hapticTime = shared.object(forKey: guestDateKey) as? Date {
+            guestHapticsDate = DateFormatter.localizedString(
+                from: hapticTime, dateStyle: .short, timeStyle: .medium)
+        } else {
+            guestHapticsDate = ""
+        }
+        let rejected = shared.dictionary(forKey: guestRejectedKey) ?? [:]
+        let now = Date.timeIntervalSinceReferenceDate
+        guestRejectedCount = rejected.values.compactMap { $0 as? Double }
+            .filter { now - $0 >= 0 && now - $0 < 12 * 3600 }.count
         if let stamp = shared.object(forKey: guestUpdatedKey) as? Date {
             guestLastSample = DateFormatter.localizedString(from: stamp,
                                         dateStyle: .short, timeStyle: .medium)
         } else {
             guestLastSample = ""
         }
+    }
+
+    func guestHapticsLabel(english: Bool) -> String {
+        switch guestHapticsState {
+        case "playing":
+            return english ? "Music Haptics confirmed" : "Music Haptics activo"
+        case "searching":
+            return english ? "Finding the correct recording" : "Buscando canción"
+        case "checking":
+            return english ? "Checking Apple's haptic catalog" : "Comprobando compatibilidad"
+        case "ready":
+            return english ? "Compatible haptic track found" : "Pista compatible encontrada"
+        case "unavailable":
+            return english ? "No compatible haptic track confirmed" : "Sin pista compatible confirmada"
+        case "disabled":
+            return english ? "Music Haptics disabled in iOS" : "Music Haptics desactivado en iOS"
+        case "error":
+            return english ? "Haptics check unavailable" : "No se pudo comprobar Music Haptics"
+        default:
+            return english ? "No guest haptic result yet" : "Sin resultados hápticos todavía"
+        }
+    }
+
+    var guestHapticsSymbol: String {
+        switch guestHapticsState {
+        case "playing": return "waveform"
+        case "searching": return "magnifyingglass"
+        case "checking": return "clock.arrow.circlepath"
+        case "ready": return "checkmark.circle"
+        case "unavailable": return "waveform.slash"
+        case "disabled": return "circle.slash"
+        default: return "questionmark.circle"
+        }
+    }
+
+    func retryRejectedISRCs() {
+        let shared = LCUtils.appGroupUserDefault
+        shared.removeObject(forKey: guestRejectedKey)
+        shared.synchronize()
+        refreshGuestLog()
     }
 
     private func saveEvent(_ message: String) {
@@ -84,6 +147,10 @@ final class MBHapticsDiagnostic: ObservableObject {
         shared.removeObject(forKey: guestEventsKey)
         shared.removeObject(forKey: guestSamplesKey)
         shared.removeObject(forKey: guestUpdatedKey)
+        shared.removeObject(forKey: guestStateKey)
+        shared.removeObject(forKey: guestDetailKey)
+        shared.removeObject(forKey: guestSongKey)
+        shared.removeObject(forKey: guestDateKey)
         shared.set(true, forKey: guestEnabledKey)
         shared.synchronize()
         refreshGuestLog()
@@ -118,6 +185,10 @@ final class MBHapticsDiagnostic: ObservableObject {
         shared.removeObject(forKey: guestEventsKey)
         shared.removeObject(forKey: guestSamplesKey)
         shared.removeObject(forKey: guestUpdatedKey)
+        shared.removeObject(forKey: guestStateKey)
+        shared.removeObject(forKey: guestDetailKey)
+        shared.removeObject(forKey: guestSongKey)
+        shared.removeObject(forKey: guestDateKey)
         shared.synchronize()
         refreshGuestLog()
         recordedEvents = []
