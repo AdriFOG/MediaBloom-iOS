@@ -1,6 +1,7 @@
 // BloomAudio v0.2 experimental, compiled ONLY into the MediaBloom edition.
 // It does not touch iOS system volume, output routes, or audio buffers.
-// Supported initial guests: YouTube and YouTube Music only.
+// Stable guests: YouTube and YouTube Music. Spotify is an AVFoundation-only
+// opt-in prototype; its native output path may not use these player classes.
 // The runtime hooks are opt-in and default OFF until enabled in MediaBloom.
 // This is a narrow AVFoundation proof of concept, not universal audio capture.
 
@@ -27,10 +28,22 @@ static float MBClampVolume(float value) {
     return value;
 }
 
+static BOOL MBIsSpotifyGuest(NSString *identifier) {
+    return [identifier.lowercaseString isEqualToString:@"com.spotify.client"];
+}
+
 static BOOL MBIsSupportedGuest(NSString *identifier) {
     NSString *name = identifier.lowercaseString;
     return [name isEqualToString:@"com.google.ios.youtube"] ||
-           [name isEqualToString:@"com.google.ios.youtubemusic"];
+           [name isEqualToString:@"com.google.ios.youtubemusic"] ||
+           MBIsSpotifyGuest(name);
+}
+
+// A hook being installed does NOT imply that Spotify routes its actual
+// sound through AVFoundation. Enable its slider only after we observe a
+// real player instance inside the guest.
+static BOOL MBSpotifyAudioAvailable(void) {
+    return gMBAudioObjects != nil && gMBAudioObjects.allObjects.count > 0;
 }
 
 static BOOL MBIsMediaHost(void) {
@@ -83,16 +96,32 @@ static void MBApplyLiveGain(void) {
     }
 }
 
+static void MBTrackPlayerOnMain(id player) {
+    if (!player || !gMBAudioObjects) return;
+    if ([gMBAudioObjects containsObject:player]) return;
+    [gMBAudioObjects addObject:player];
+    if (MBIsSpotifyGuest(gMBAudioGuest)) {
+        // Count only concrete, weakly held AVFoundation players. This makes
+        // Spotify support observable without touching decoded audio or
+        // claiming its proprietary playback pipeline is controllable.
+        NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
+        [shared setInteger:gMBAudioObjects.allObjects.count
+                   forKey:@"MediaBloomSpotifyAVPlayersObservedV1"];
+        [shared synchronize];
+        NSLog(@"[BloomAudio] Spotify AVFoundation player observed: %@",
+              NSStringFromClass([player class]));
+    }
+}
+
 static void MBTrackPlayer(id player) {
     // Players must not be retained by the tweak. All timers and tracking
     // stay on the main queue; UIKit media playback must never be blocked.
     if ([NSThread isMainThread]) {
-        [gMBAudioObjects addObject:player];
+        MBTrackPlayerOnMain(player);
     } else {
         __weak id weakPlayer = player;
         dispatch_async(dispatch_get_main_queue(), ^{
-            id strongPlayer = weakPlayer;
-            if (strongPlayer) [gMBAudioObjects addObject:strongPlayer];
+            MBTrackPlayerOnMain(weakPlayer);
         });
     }
 }
@@ -158,6 +187,11 @@ static void MBInstallAudioHooks(void) {
         dlopen("/System/Library/Frameworks/AVFoundation.framework/AVFoundation", RTLD_LAZY);
         gMBAudioGuest = [guest.lowercaseString copy];
         gMBAudioObjects = [NSHashTable weakObjectsHashTable];
+        if (MBIsSpotifyGuest(gMBAudioGuest)) {
+            [NSUserDefaults.lcSharedDefaults setInteger:0
+                         forKey:@"MediaBloomSpotifyAVPlayersObservedV1"];
+            [NSUserDefaults.lcSharedDefaults synchronize];
+        }
         gMBAudioLastAppliedGain = MBCurrentGain();
         gMBAudioAVPlayerSetVolume = MBHookInstanceMethod(
             @"AVPlayer", @selector(setVolume:), (IMP)MBAVPlayerSetVolume);
@@ -179,6 +213,11 @@ static void MBInstallAudioHooks(void) {
             // Refresh the shared suite before sampling its new gain value.
             [NSUserDefaults.lcSharedDefaults synchronize];
             float gain = MBCurrentGain();
+            if (MBIsSpotifyGuest(gMBAudioGuest) && gMBVolumeController) {
+                // The Spotify bubble becomes usable only if AVFoundation
+                // actually exposed at least one controllable player.
+                [gMBVolumeController updateLabels];
+            }
             if (fabsf(gain - gMBAudioLastAppliedGain) < 0.001f) return;
             gMBAudioLastAppliedGain = gain;
             for (id player in gMBAudioObjects.allObjects) {
