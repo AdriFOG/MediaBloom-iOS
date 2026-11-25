@@ -69,6 +69,28 @@ assert 'AudioQueueSetParameter' not in tweak
 assert 'setOutputVolume:' in tweak
 assert 'MPVolumeView' not in tweak
 
+# Spotify AudioUnit probe must be isolated to this guest, processed only
+# after a successful callback, and never touch hardware or capture audio.
+assert "MBSpotifyAUInstallHooks();" in tweak
+assert "MBSpotifyAUHasConfirmedPCM();" in tweak
+assert "MBSpotifyAUPublishStatus();" in tweak
+assert "MBSpotifyAURenderCallback" in tweak
+assert "AudioUnitSetProperty" in tweak
+assert "AudioOutputUnitStart" in tweak
+assert "kAudioUnitProperty_SetRenderCallback" in tweak
+assert "kAudioFormatLinearPCM" in tweak
+assert "kAudioFormatFlagIsPacked" in tweak
+assert "kAudioUnitRenderAction_OutputIsSilence" in tweak
+assert "MBSpotifyAUOriginalSetProperty" in tweak
+assert "MediaBloomSpotifyAudioUnitStatusV1" in tweak
+assert "MediaBloomSpotifyAudioUnitStatusV1" in Path("../media-tools/ui/MediaBloomAppearance.swift").read_text()
+assert "MediaBloomSpotifyAudioUnit.inc" in Path("../media-tools/scripts/apply_audio.py").read_text()
+assert "Spotify · AudioUnit PCM beta" in tweak
+assert "AudioUnitRender(" not in tweak
+assert "AudioQueueSetParameter(" not in tweak
+assert "MediaBloomSpotifyAudioUnit" in tweak
+assert "SpotifyAudioProbeReadSnapshot" not in tweak
+
 # More noticeable perceptual attenuation without ever amplifying.
 def gain(x):
     return 0.0 if x <= 0.0 else x**2.6
