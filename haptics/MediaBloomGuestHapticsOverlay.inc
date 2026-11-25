@@ -80,19 +80,20 @@ static void MBMHUpdateGuestOverlay(void) {
         dispatch_async(dispatch_get_main_queue(), ^{ MBMHUpdateGuestOverlay(); });
         return;
     }
-    if (!MBMHOverlayAllowed()) {
-        [gMBMHOverlayView removeFromSuperview];
-        gMBMHOverlayView = nil;
-        gMBMHOverlayTitle = nil;
-        gMBMHOverlaySong = nil;
-        gMBMHOverlaySpinner = nil;
+    if (!MBMHOverlayAllowed() || !gMBMHSongSignature.length) {
+        MBMHHideGuestOverlay(NO);
+        return;
+    }
+    NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
+    NSString *state = [shared stringForKey:kMBMHStatusKey] ?: @"searching";
+    // The indicator is for progress only, not persistent result messages.
+    BOOL loading = [@[@"searching", @"checking", @"resyncing"] containsObject:state];
+    if (!loading || [gMBMHOverlayDismissedSong isEqualToString:gMBMHSongSignature]) {
+        MBMHHideGuestOverlay(YES);
         return;
     }
     UIWindow *window = MBMHOverlayWindow();
-    if (!window || !gMBMHSongSignature.length) return;
-
-    NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
-    NSString *state = [shared stringForKey:kMBMHStatusKey] ?: @"searching";
+    if (!window) return;
     NSString *song = [shared stringForKey:kMBMHStatusSongKey] ?: @"";
     if (!gMBMHOverlayView) {
         UIView *root = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 312, 54)];
@@ -162,15 +163,8 @@ static void MBMHUpdateGuestOverlay(void) {
     }
     gMBMHOverlayTitle.text = MBMHOverlayText(state);
     gMBMHOverlaySong.text = song;
-    BOOL loading = [@[@"searching", @"checking", @"resyncing"]
-        containsObject:state];
-    if (loading) {
-        gMBMHOverlaySpinner.hidden = NO;
-        [gMBMHOverlaySpinner startAnimating];
-    } else {
-        [gMBMHOverlaySpinner stopAnimating];
-        gMBMHOverlaySpinner.hidden = YES;
-    }
+    gMBMHOverlaySpinner.hidden = NO;
+    [gMBMHOverlaySpinner startAnimating];
     // A real spinner represents an unknown wait; we deliberately show no
     // fake percentage because Apple's haptic download has no progress API.
     if (![state isEqualToString:gMBMHOverlayLastState]) {
