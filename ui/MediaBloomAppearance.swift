@@ -743,3 +743,172 @@ struct MBMediaTagEditor: View {
         .preferredColorScheme(.light)
     }
 }
+
+
+// Settings-only picker: reads shared media guests without modifying containers.
+private struct MBEdgePickerApp: Identifiable {
+    let id: String
+    let name: String
+    let icon: UIImage?
+}
+
+private struct MBEdgeAppPicker: View {
+    let english: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var apps: [MBEdgePickerApp] = []
+    @State private var selected: [String] = []
+    private static let selectionKey = "MediaBloomEdgeAppIDsV1"
+    // The same known multimedia IDs used by the in-player Edge menu.
+    private static let preferred: [String] = [
+        "com.google.ios.youtubemusic", "com.spotify.client",
+        "org.videolan.vlc-ios", "com.apple.music", "com.google.ios.youtube",
+        "com.amazon.mp3", "com.soundcloud.touchapp", "com.deezer.deezer",
+        "com.tidal", "com.netflix.netflix", "com.amazon.aiv",
+        "com.twitch.twitch", "tv.twitch", "com.plexapp.plex",
+        "com.firecore.infuse", "com.disney.disneyplus"
+    ]
+    private func t(_ es: String, _ en: String) -> String { english ? en : es }
+
+    private static func plist(_ url: URL) -> [String: Any] {
+        guard let data = try? Data(contentsOf: url),
+              let dictionary = (try? PropertyListSerialization.propertyList(
+                  from: data, options: [], format: nil)) as? [String: Any]
+        else { return [:] }
+        return dictionary
+    }
+
+    private static func installedMedia() -> [MBEdgePickerApp] {
+        guard let group = LCSharedUtils.appGroupPath() else { return [] }
+        let folder = group.appendingPathComponent("LiveContainer/Applications",
+                                                  isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]) else { return [] }
+        let defaults = LCUtils.appGroupUserDefault
+        let known = Set(preferred)
+        var result: [MBEdgePickerApp] = []
+        var seen = Set<String>()
+        for file in files where file.pathExtension.lowercased() == "app" {
+            let metadata = plist(file.appendingPathComponent("LCAppInfo.plist"))
+            if ["isHidden", "isLocked", "LCHidden", "LCLocked"].contains(where: {
+                (metadata[$0] as? NSNumber)?.boolValue == true
+            }) { continue }
+            let info = plist(file.appendingPathComponent("Info.plist"))
+            guard let id = (info["LCBundleIdentifier"] as? String ??
+                            info["CFBundleIdentifier"] as? String)?.lowercased(),
+                  !id.isEmpty, seen.insert(id).inserted else { continue }
+            let tag = defaults.string(forKey: "BloomBoxMediaTagV1." + id)
+            if tag == "none" || (tag != "music" && tag != "video" && !known.contains(id)) {
+                continue
+            }
+            let name = (info["CFBundleDisplayName"] as? String ??
+                        info["CFBundleName"] as? String) ?? file.deletingPathExtension().lastPathComponent
+            let icon = UIImage(contentsOfFile: file.appendingPathComponent("LCAppIconLight.png").path)
+                ?? UIImage(contentsOfFile: file.appendingPathComponent("LCAppIconDark.png").path)
+            result.append(MBEdgePickerApp(id: id, name: name, icon: icon))
+        }
+        return result.sorted { a, b in
+            let ai = preferred.firstIndex(of: a.id) ?? preferred.count
+            let bi = preferred.firstIndex(of: b.id) ?? preferred.count
+            return ai == bi ? a.name.localizedStandardCompare(b.name) == .orderedAscending : ai < bi
+        }
+    }
+
+    private func reload() {
+        apps = Self.installedMedia()
+        let valid = Set(apps.map(\.id))
+        let configured = LCUtils.appGroupUserDefault.array(forKey: Self.selectionKey) as? [String]
+        let defaults = configured ?? Array(apps.prefix(4).map(\.id))
+        var seen = Set<String>()
+        selected = Array(defaults.filter { valid.contains($0) && seen.insert($0).inserted }.prefix(4))
+    }
+
+    private func save() {
+        LCUtils.appGroupUserDefault.set(selected, forKey: Self.selectionKey)
+        LCUtils.appGroupUserDefault.synchronize()
+    }
+
+    @ViewBuilder
+    private func appIcon(_ app: MBEdgePickerApp) -> some View {
+        if let icon = app.icon {
+            Image(uiImage: icon).resizable().scaledToFit()
+                .frame(width: 34, height: 34)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            Image(systemName: "music.note")
+                .foregroundColor(.secondary)
+                .frame(width: 34, height: 34)
+        }
+    }
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section(header: Text(t("En la muesca (\(selected.count)/4)",
+                                       "On Edge (\(selected.count)/4)"))) {
+                    if selected.isEmpty {
+                        Text(t("No hay accesos seleccionados", "No selected shortcuts"))
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(selected, id: \.self) { id in
+                        if let app = apps.first(where: { $0.id == id }) {
+                            HStack(spacing: 12) {
+                                appIcon(app)
+                                Text(app.name)
+                                Spacer()
+                                Button {
+                                    selected.removeAll(where: { $0 == id })
+                                    save()
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundColor(.red)
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel(t("Quitar \(app.name)", "Remove \(app.name)"))
+                            }
+                        }
+                    }
+                    .onMove { source, destination in
+                        selected.move(fromOffsets: source, toOffset: destination)
+                        save()
+                    }
+                }
+                Section(header: Text(t("Agregar aplicaciones", "Add apps"))) {
+                    ForEach(apps.filter { !selected.contains($0.id) }) { app in
+                        Button {
+                            guard selected.count < 4 else { return }
+                            selected.append(app.id)
+                            save()
+                        } label: {
+                            HStack(spacing: 12) {
+                                appIcon(app)
+                                Text(app.name)
+                                Spacer()
+                                Image(systemName: "plus.circle")
+                            }
+                        }
+                        .disabled(selected.count >= 4)
+                    }
+                    if apps.isEmpty {
+                        Text(t("No hay apps multimedia compartidas. Revisa las etiquetas de las apps.",
+                               "No shared media apps found. Check the app labels."))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .navigationTitle(t("Apps de la muesca", "Edge apps"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    EditButton().disabled(selected.count < 2)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(t("Listo", "Done")) { dismiss() }
+                }
+            }
+            .onAppear(perform: reload)
+        }
+        .navigationViewStyle(.stack)
+        .preferredColorScheme(.light)
+    }
+}
