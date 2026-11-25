@@ -199,6 +199,8 @@ struct MediaBloomAppearanceSheet: View {
     @State private var hasWallpaper = false
     @State private var imageError = false
     @StateObject private var haptics = MBHapticsDiagnostic.shared
+    @AppStorage("MediaBloomSpotifyAVPlayersObservedV1", store: LCUtils.appGroupUserDefault)
+    private var spotifyAVPlayersObserved = 0
     @AppStorage("MediaBloomHapticsAutoISRCV1", store: LCUtils.appGroupUserDefault)
     private var automaticMusicHaptics = false
     @AppStorage("MediaBloomHapticsGuestOverlayV1", store: LCUtils.appGroupUserDefault)
@@ -423,9 +425,13 @@ struct MediaBloomAppearanceSheet: View {
             } label: {
                 Label(haptics.captureActive
                       ? t("Detener registro", "Stop capture")
-                      : t("Iniciar registro para YouTube Music", "Start YouTube Music capture"),
+                      : t("Registrar YouTube Music o Spotify", "Capture YouTube Music or Spotify"),
                       systemImage: haptics.captureActive ? "stop.circle.fill" : "record.circle")
             }
+            Text(t("Spotify beta: detección de canciones y audio AVFoundation, sin modificar Music Haptics. Reproductores AV detectados: \(spotifyAVPlayersObserved). Reabre Ajustes para actualizar el contador.",
+                   "Spotify beta: read-only song detection and AVFoundation audio, without changing Music Haptics. AV players detected: \(spotifyAVPlayersObserved). Reopen Settings to refresh this counter."))
+                .font(.caption)
+                .foregroundColor(.secondary)
             Toggle(isOn: $automaticMusicHaptics) {
                 Label(t("Probar Music Haptics automático",
                         "Try automatic Apple Music Haptics"), systemImage: "waveform")
@@ -484,7 +490,8 @@ struct MediaBloomAppearanceSheet: View {
                 }
             }
             if haptics.guestSamples > 0 || !haptics.guestEvents.isEmpty {
-                Label(t("Diagnóstico desde YouTube Music", "YouTube Music guest diagnostic"),
+                Label(t("Diagnóstico de YouTube Music / Spotify",
+                        "YouTube Music / Spotify diagnostic"),
                       systemImage: "waveform.path.ecg")
                     .font(.subheadline.weight(.semibold))
                 Text(t("Lecturas dentro del reproductor: ", "Samples inside player: ")
@@ -502,8 +509,8 @@ struct MediaBloomAppearanceSheet: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text(t("Sin lecturas desde YouTube Music. Inicia el registro y abre el reproductor desde MediaBloom.",
-                       "No in-guest data yet. Start capture, then open YouTube Music from MediaBloom."))
+                Text(t("Sin lecturas todavía. Inicia el registro y abre YouTube Music o Spotify desde MediaBloom.",
+                       "No data yet. Start capture, then open YouTube Music or Spotify from MediaBloom."))
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
