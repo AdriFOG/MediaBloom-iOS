@@ -311,3 +311,80 @@ jobs:
             - Se conservan las funciones de MediaBloom 2.0 y su instalación independiente de BloomBox.
 
             Spotify playback is unchanged; this update focuses on the new app icon.
+
+  publish-v240:
+    name: Publish MediaBloom v2.4.0
+    # Publish only the explicitly approved release merge on main, after
+    # full Xcode and SideStore validation from that exact merged commit.
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      startsWith(github.event.head_commit.message, 'release: MediaBloom v2.4.0')
+    needs: build-media
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated MediaBloom v2.4.0 IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: MediaBloom-SideStore-unsigned.ipa
+          path: release
+
+      - name: Verify release identity, IPA integrity and checksum
+        run: |
+          set -euo pipefail
+          test -s release/MediaBloom-SideStore-unsigned.ipa
+          unzip -t release/MediaBloom-SideStore-unsigned.ipa | tail -n 2
+          python3 - <<'PY'
+          import plistlib, zipfile
+          name = "release/MediaBloom-SideStore-unsigned.ipa"
+          with zipfile.ZipFile(name) as z:
+              info = plistlib.loads(z.read("Payload/LiveContainer.app/Info.plist"))
+          assert info["CFBundleIdentifier"] == "com.kdt.BloomBoxMedia"
+          assert info["CFBundleShortVersionString"] == "2.4.0"
+          assert int(info["CFBundleVersion"]) >= 34000
+          assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == ["bloomboxmedia"]
+          print("PASS: authentic independent MediaBloom 2.4.0 IPA")
+          PY
+          (cd release && sha256sum MediaBloom-SideStore-unsigned.ipa > SHA256SUMS.txt)
+
+      - name: Release MediaBloom v2.4.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.4.0
+          name: "MediaBloom 2.4 — Edge, Music Haptics y accesos directos"
+          target_commitish: ${{ github.sha }}
+          prerelease: false
+          draft: false
+          make_latest: true
+          fail_on_unmatched_files: true
+          files: |
+            release/MediaBloom-SideStore-unsigned.ipa
+            release/SHA256SUMS.txt
+          body: |
+            ## MediaBloom 2.4 — Novedades 🎧
+
+            - **MediaBloom Edge**: muesca lateral con animación gelatinosa de rebote, menú flotante de acceso rápido y ocultación automática.
+            - **Hasta cuatro apps en Edge**, elegidas y ordenadas desde Apariencia, conservando el control de volumen por aplicación.
+            - **Music Haptics**: detección y resincronización mejoradas, búsqueda de metadatos por MusicBrainz/Deezer y estado temporal descartable deslizando el indicador. La compatibilidad depende de la canción y la app.
+            - **Tu catálogo en MediaBloom**: selecciona qué aplicaciones compartidas de BloomBox aparecen en el launcher, en vertical y horizontal, sin límite de cuatro.
+            - **Accesos directos WebClip**: crea perfiles con el icono original de cada aplicación, configurados para abrirla con `bloomboxmedia://` y no con BloomBox. Es necesario instalar cada perfil desde Ajustes de iOS.
+            - Se mantienen el nuevo icono de Bloom, personalización, catálogo musical, BloomAudio, extensiones de SideStore e instalación separada.
+
+            ### Importante
+            - Solo se pueden abrir desde MediaBloom las apps compartidas y desbloqueadas. Los contenedores privados no se copian ni se exponen automáticamente.
+            - MediaBloom sigue siendo un host multimedia independiente, no un launcher de juegos.
+            - Music Haptics y algunos controles avanzados siguen siendo experimentales.
+            - La IPA se entrega **sin firmar** para instalar con SideStore u otro firmador compatible. El App Group compartido requiere identidades de firma compatibles.
+
+            ## English — What's New
+
+            - **MediaBloom Edge**: elastic jelly-style side rail, quick launcher, automatic hiding and per-app volume control.
+            - Select and reorder **up to four Edge shortcuts** in Appearance.
+            - **Music Haptics** improvements: faster discovery and resync, better MusicBrainz/Deezer metadata matching, temporary swipe-to-dismiss status. Support depends on the song and app.
+            - **Custom app library**: choose which shared BloomBox apps appear on the MediaBloom Home, in portrait and landscape, without the Edge four-app limit.
+            - **Home Screen WebClips**: create an icon-based configuration profile that launches the chosen app exclusively through the `bloomboxmedia://` URL scheme. iOS Settings must be used to install each profile.
+            - Existing music discovery, customization, independent BloomAudio and SideStore compatibility are preserved.
+
+            Only shared, unlocked apps can be launched by MediaBloom. Private app data is not copied. This is a separate unsigned multimedia host requiring compatible App Group signing, not a games launcher.
