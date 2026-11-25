@@ -25,14 +25,14 @@ static NSArray<NSDictionary *> *MBEdgeApps(void) {
         NSDictionary *info = [NSDictionary dictionaryWithContentsOfURL:[entry URLByAppendingPathComponent:@"Info.plist"]];
         NSDictionary *lc = [NSDictionary dictionaryWithContentsOfURL:[entry URLByAppendingPathComponent:@"LCAppInfo.plist"]];
         if ([lc[@"isHidden"] boolValue] || [lc[@"isLocked"] boolValue] || [lc[@"LCHidden"] boolValue] || [lc[@"LCLocked"] boolValue]) continue;
-        NSString *bid = [info[@"CFBundleIdentifier"] lowercaseString];
+        NSString *bid = [(info[@"LCBundleIdentifier"] ?: info[@"CFBundleIdentifier"]) lowercaseString];
         NSString *name = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: entry.lastPathComponent;
         if (!bid.length || !name.length) continue;
         NSString *tag = [NSUserDefaults.lcSharedDefaults stringForKey:[@"BloomBoxMediaTagV1." stringByAppendingString:bid]];
         if ([tag isEqualToString:@"none"]) continue;
         if (![tag isEqualToString:@"music"] && ![tag isEqualToString:@"video"] && ![ids containsObject:bid]) continue;
         [result addObject:@{@"id":bid,@"name":name,@"path":entry.lastPathComponent,
-                            @"folder":lc[@"LCDataUUID"] ?: @""}];
+                            @"folder":lc[@"LCDataUUID"] ?: @"", @"bundle":entry.path}];
     }
     [result sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
         NSUInteger ai = [ids indexOfObject:a[@"id"]], bi = [ids indexOfObject:b[@"id"]];
@@ -43,9 +43,45 @@ static NSArray<NSDictionary *> *MBEdgeApps(void) {
     return result;
 }
 
+// Use the same cached icon images as the MediaBloom launcher. For a newly
+// installed app with no cache, read the actual icon declared in its plist.
+static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
+    NSArray *caches = dark ? @[@"LCAppIconDark.png", @"LCAppIconLight.png"] : @[@"LCAppIconLight.png", @"LCAppIconDark.png"];
+    for (NSString *file in caches) {
+        UIImage *image = [UIImage imageWithContentsOfFile:[path stringByAppendingPathComponent:file]];
+        if (image) return image;
+    }
+    NSBundle *bundle = [NSBundle bundleWithPath:path];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Info.plist"]];
+    NSDictionary *primary = info[@"CFBundleIcons"][@"CFBundlePrimaryIcon"];
+    NSArray *files = primary[@"CFBundleIconFiles"] ?: info[@"CFBundleIconFiles"] ?: @[];
+    NSMutableArray *names = [NSMutableArray arrayWithArray:files];
+    if ([primary[@"CFBundleIconName"] isKindOfClass:NSString.class]) [names addObject:primary[@"CFBundleIconName"]];
+    if ([info[@"CFBundleIconFile"] isKindOfClass:NSString.class]) [names addObject:info[@"CFBundleIconFile"]];
+    for (NSString *name in [names reverseObjectEnumerator]) {
+        NSString *base = [name.stringByDeletingPathExtension stringByDeletingPathExtension];
+        for (NSString *suffix in @[@"@3x.png", @"@2x.png", @".png", @""]) {
+            UIImage *image = [UIImage imageWithContentsOfFile:[path stringByAppendingPathComponent:[base stringByAppendingString:suffix]]];
+            if (image) return image;
+        }
+        UIImage *image = bundle ? [UIImage imageNamed:base inBundle:bundle compatibleWithTraitCollection:nil] : nil;
+        if (image) return image;
+    }
+    return nil;
+}
+@interface MBEdgeButton : UIButton
+@property(nonatomic,assign) CGFloat touchPadding;
+@end
+@implementation MBEdgeButton
+- (BOOL)pointInside:(CGPoint)p withEvent:(UIEvent *)event {
+    return CGRectContainsPoint(CGRectInset(self.bounds,-self.touchPadding,-self.touchPadding),p);
+}
+@end
+
 @interface MBEdgeController : UIViewController
 @property(nonatomic,strong) CAShapeLayer *rail;
 @property(nonatomic,strong) UIButton *tab;
+@property(nonatomic,strong) UIButton *railClose;
 @property(nonatomic,strong) UIButton *sync;
 @property(nonatomic,strong) UIButton *speaker;
 @property(nonatomic,strong) UIView *volumeCapsule;
@@ -60,7 +96,8 @@ static NSArray<NSDictionary *> *MBEdgeApps(void) {
 
 @implementation MBEdgeController
 - (UIButton *)button:(NSString *)symbol color:(UIColor *)color label:(NSString *)label action:(SEL)action {
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    MBEdgeButton *b = [MBEdgeButton buttonWithType:UIButtonTypeCustom];
+    b.touchPadding = 4;
     b.tintColor = UIColor.whiteColor;
     b.backgroundColor = color;
     b.layer.cornerRadius = 22.5;
@@ -76,9 +113,12 @@ static NSArray<NSDictionary *> *MBEdgeApps(void) {
     self.rail = [CAShapeLayer layer];
     self.rail.fillColor = UIColor.blackColor.CGColor;
     [self.view.layer addSublayer:self.rail];
+    self.railClose = [self button:@"" color:UIColor.clearColor label:@"Cerrar menú lateral" action:@selector(toggle:)];
+    [self.view addSubview:self.railClose];
     self.tab = [self button:@"line.3.horizontal" color:UIColor.clearColor label:@"MediaBloom Edge" action:@selector(toggle:)];
     [self.tab setImage:nil forState:UIControlStateNormal];
     UIView *mark = [[UIView alloc] initWithFrame:CGRectMake(9,20,2,25)];
+    mark.tag = 101;
     mark.backgroundColor = [UIColor colorWithRed:.60 green:.43 blue:.93 alpha:1];
     mark.layer.cornerRadius = 1;
     mark.userInteractionEnabled = NO;
@@ -104,7 +144,9 @@ static NSArray<NSDictionary *> *MBEdgeApps(void) {
     }
     self.shortcuts = [NSMutableArray array];
     self.apps = @[];
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
+    UILongPressGestureRecognizer *pan = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
+    pan.minimumPressDuration = .35;
+    pan.cancelsTouchesInView = YES;
     [self.tab addGestureRecognizer:pan];
 }
 - (void)refreshApps {
@@ -114,12 +156,25 @@ static NSArray<NSDictionary *> *MBEdgeApps(void) {
     for (UIButton *b in self.shortcuts) [b removeFromSuperview];
     [self.shortcuts removeAllObjects];
     self.apps = next;
-    NSArray *colors = @[UIColor.systemRedColor,UIColor.systemGreenColor,UIColor.systemOrangeColor,UIColor.systemPinkColor];
+    BOOL dark = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
     for (NSUInteger i=0;i<next.count;i++) {
         NSDictionary *app = next[i];
-        NSString *bid = app[@"id"];
-        NSString *symbol = [bid containsString:@"youtube"] ? @"play.fill" : [bid containsString:@"vlc"] ? @"play.rectangle.fill" : @"music.note";
-        UIButton *b = [self button:symbol color:colors[i] label:app[@"name"] action:@selector(openApp:)];
+        UIButton *b = [self button:@"" color:UIColor.clearColor label:app[@"name"] action:@selector(openApp:)];
+        UIImage *icon = MBEdgeAppIcon(app[@"bundle"], dark);
+        if (icon) {
+            [b setImage:[icon imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal] forState:UIControlStateNormal];
+            b.imageView.contentMode = UIViewContentModeScaleAspectFit;
+            b.clipsToBounds = YES;
+        } else {
+            // Never substitute a made-up service logo. Show the actual app name.
+            b.backgroundColor = [UIColor colorWithWhite:.20 alpha:1];
+            [b setTitle:app[@"name"] forState:UIControlStateNormal];
+            b.titleLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightSemibold];
+            b.titleLabel.numberOfLines = 2;
+            b.titleLabel.textAlignment = NSTextAlignmentCenter;
+            b.titleLabel.adjustsFontSizeToFitWidth = YES;
+            [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+        }
         b.tag = i;
         [self.view addSubview:b];
         [self.shortcuts addObject:b];
@@ -162,9 +217,13 @@ static NSArray<NSDictionary *> *MBEdgeApps(void) {
     [CATransaction begin]; [CATransaction setDisableActions:YES]; self.rail.path=p.CGPath; [CATransaction commit];
     CGFloat x=self.right?w-38:38, size=45*scale;
     CGFloat row=55*scale, first=cy-145*scale;
-    self.tab.frame=CGRectMake(self.right?w-32:0,cy-40,32,80);
-    self.tab.alpha=1; self.tab.userInteractionEnabled=YES;
-    if (self.expanded) { self.tab.frame=CGRectMake(self.right?w-15:0,cy-40,15,80); }
+    self.tab.frame=CGRectMake(self.right?w-48:0,cy-48,48,96);
+    UIView *mark = [self.tab viewWithTag:101];
+    mark.frame = CGRectMake(self.right?42:5,35,2,25);
+    self.tab.alpha=self.expanded?0:1; self.tab.userInteractionEnabled=!self.expanded;
+    self.railClose.frame=CGRectMake(self.right?w-width:0,cy-height/2,width,height);
+    self.railClose.hidden=!self.expanded;
+    self.railClose.userInteractionEnabled=self.expanded;
     self.sync.frame=CGRectMake(x-size/2,first-size/2,size,size);
     CGFloat volY=first+row;
     CGFloat capWidth=self.volumeExpanded?MIN(215,w-32):size;
@@ -179,11 +238,13 @@ static NSArray<NSDictionary *> *MBEdgeApps(void) {
     for (NSUInteger i=0;i<self.shortcuts.count;i++) {
         UIButton *b=self.shortcuts[i];
         b.frame=CGRectMake(x-size/2,volY+row*(i+1)+15*scale-size/2,size,size);
-        b.layer.cornerRadius=size/2; b.alpha=self.expanded?1:0; b.userInteractionEnabled=self.expanded;
+        b.layer.cornerRadius=size*.23; b.alpha=self.expanded?1:0; b.userInteractionEnabled=self.expanded;
     }
     self.sync.layer.cornerRadius=size/2;
     [self.view bringSubviewToFront:self.tab];
+    [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
 }
+- (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return self.right ? UIRectEdgeRight : UIRectEdgeLeft; }
 - (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; [self layoutEdge:NO]; }
 - (void)animate {
     [UIView animateWithDuration:.42 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:0 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{ [self layoutEdge:YES]; } completion:nil];
@@ -213,13 +274,19 @@ static NSArray<NSDictionary *> *MBEdgeApps(void) {
     NSMutableArray *items=[NSMutableArray arrayWithObject:[NSURLQueryItem queryItemWithName:@"bundle-name" value:a[@"path"]]];
     if ([a[@"folder"] length]) [items addObject:[NSURLQueryItem queryItemWithName:@"container-folder-name" value:a[@"folder"]]];
     url.queryItems=items;
-    if (url.URL) [UIApplication.sharedApplication openURL:url.URL options:@{} completionHandler:nil];
+    if (url.URL) {
+        // Use the established guest URL route; honor lock checks and the
+        // existing LiveContainer switch confirmation policy.
+        [UIApplication.sharedApplication openURL:url.URL options:@{} completionHandler:^(BOOL ok) {
+            if (!ok) [[[UINotificationFeedbackGenerator alloc] init] notificationOccurred:UINotificationFeedbackTypeWarning];
+        }];
+    }
 }
-- (void)drag:(UIPanGestureRecognizer *)pan {
+- (void)drag:(UILongPressGestureRecognizer *)pan {
     if (pan.state==UIGestureRecognizerStateChanged) {
         CGFloat h=self.view.bounds.size.height;
-        if (h>0) self.anchor=MAX(.2,MIN(.8,self.anchor+[pan translationInView:self.view].y/h));
-        [pan setTranslation:CGPointZero inView:self.view]; [self layoutEdge:NO];
+        if (h>0) self.anchor=MAX(.2,MIN(.8,[pan locationInView:self.view].y/h));
+        [self layoutEdge:NO];
     }
 }
 @end
@@ -229,12 +296,25 @@ static NSArray<NSDictionary *> *MBEdgeApps(void) {
 @end
 @implementation MBEdgeWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *hit=[super hitTest:point withEvent:event];
+    if (self.hidden || self.alpha < .01 || !self.userInteractionEnabled) return nil;
     MBEdgeController *c=(MBEdgeController *)self.rootViewController;
-    if (hit==self || hit==c.view) {
-        return nil;
+    if (!c.isViewLoaded) return nil;
+    CGPoint local=[c.view convertPoint:point fromView:self];
+    // Check controls directly so the transparent overlay never steals a
+    // button tap or lets the guest underneath receive it instead.
+    if (!c.expanded) {
+        CGPoint p=[c.tab convertPoint:local fromView:c.view];
+        return [c.tab pointInside:p withEvent:event] ? c.tab : nil;
     }
-    return hit;
+    NSArray *targets = [@[c.volumeCapsule,c.sync] arrayByAddingObjectsFromArray:c.shortcuts];
+    for (UIView *target in targets) {
+        if (target.hidden || !target.userInteractionEnabled) continue;
+        CGPoint p=[target convertPoint:local fromView:c.view];
+        UIView *hit=[target hitTest:p withEvent:event];
+        if (hit) return hit;
+    }
+    if (c.rail.path && CGPathContainsPoint(c.rail.path,NULL,local,false)) return c.railClose;
+    return nil;
 }
 @end
 
