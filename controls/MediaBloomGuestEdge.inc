@@ -77,9 +77,19 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
 @interface MBEdgeTouchView : UIView
 @property(nonatomic,copy) void (^boundsDidChange)(void);
 @property(nonatomic,assign) CGRect lastLayoutBounds;
+@property(nonatomic,weak) UIButton *edgeHandle;
+@property(nonatomic,assign) BOOL handleExpanded;
 @end
 @implementation MBEdgeTouchView
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    if (self.hidden || !self.userInteractionEnabled || self.alpha < .01 ||
+        ![self pointInside:point withEvent:event]) return nil;
+    // Route touches to the closed button while the rest remains pass-through.
+    if (!self.handleExpanded && self.edgeHandle && self.edgeHandle.enabled &&
+        self.edgeHandle.userInteractionEnabled) {
+        CGPoint local = [self convertPoint:point toView:self.edgeHandle];
+        if ([self.edgeHandle pointInside:local withEvent:event]) return self.edgeHandle;
+    }
     UIView *hit = [super hitTest:point withEvent:event];
     return hit == self ? nil : hit;
 }
@@ -119,6 +129,7 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 @property(nonatomic,strong) NSTimer *idleTimer;
 @property(nonatomic,strong) UITapGestureRecognizer *outsideTap;
 @property(nonatomic,weak) UIWindow *activityWindow;
+@property(nonatomic,assign) BOOL controlIsTouching;
 - (void)layoutEdge:(BOOL)animated;
 - (void)closeEdge;
 - (void)restartIdleTimer;
@@ -149,9 +160,17 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     self.tab = [self button:@"" color:UIColor.clearColor label:@"MediaBloom Edge" action:@selector(toggle:)];
     self.tab.layer.cornerRadius = 0;
     [self.tab setImage:nil forState:UIControlStateNormal];
+    // Guest edge recognizers can cancel a release; open directly on touch down.
+    [self.tab removeTarget:self action:@selector(toggle:) forControlEvents:UIControlEventTouchUpInside];
+    [self.tab addTarget:self action:@selector(toggle:) forControlEvents:UIControlEventTouchDown];
+    ((MBEdgeTouchView *)self.view).edgeHandle = self.tab;
     self.tabMark = [[UIView alloc] initWithFrame:CGRectZero];
     self.tabMark.backgroundColor = [UIColor colorWithRed:.60 green:.43 blue:.93 alpha:1];
-    self.tabMark.layer.cornerRadius = 1;
+    self.tabMark.layer.cornerRadius = 1.5;
+    self.tabMark.layer.shadowColor = UIColor.whiteColor.CGColor;
+    self.tabMark.layer.shadowOpacity = .65;
+    self.tabMark.layer.shadowRadius = 2;
+    self.tabMark.layer.shadowOffset = CGSizeZero;
     self.tabMark.userInteractionEnabled = NO;
     [self.view addSubview:self.tab];
     [self.tab addSubview:self.tabMark];
@@ -240,8 +259,12 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 - (void)outsideTapped:(UITapGestureRecognizer *)tap {
     if (tap.state == UIGestureRecognizerStateRecognized) [self closeEdge];
 }
-- (void)controlTouchStarted:(UIControl *)control { [self cancelIdleTimer]; }
+- (void)controlTouchStarted:(UIControl *)control {
+    self.controlIsTouching = YES;
+    [self cancelIdleTimer];
+}
 - (void)controlTouchFinished:(UIControl *)control {
+    self.controlIsTouching = NO;
     dispatch_async(dispatch_get_main_queue(), ^{ [self restartIdleTimer]; });
 }
 - (void)refreshGuestGain {
@@ -344,11 +367,15 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     CGFloat x=self.right?w-38:38, size=45*scale;
     CGFloat row=55*scale, first=cy-145*scale;
     CGRect contour = CGPathGetPathBoundingBox(p.CGPath);
-    CGRect target = CGRectIntersection(bounds, CGRectInset(contour, self.expanded ? 0 : -14, self.expanded ? 0 : -7));
-    // The view's frame IS the tappable area. UIKit handles the whole touch.
+    // Larger tap target extends inward; the visible black rail stays slim.
+    CGRect target = self.expanded ? contour :
+        CGRectMake(self.right ? w - MIN(60,w) : 0, cy - 55, MIN(60,w), 110);
+    target = CGRectIntersection(bounds, target);
     self.tab.frame = target;
-    self.tabMark.frame = CGRectMake((self.right ? w-6 : 5)-CGRectGetMinX(target),cy-12.5-CGRectGetMinY(target),2,25);
+    self.tabMark.frame = CGRectMake((self.right ? w-7 : 4)-CGRectGetMinX(target),
+                                    cy-16-CGRectGetMinY(target), 3, 32);
     self.tabMark.hidden = self.expanded;
+    ((MBEdgeTouchView *)self.view).handleExpanded = self.expanded;
     self.tab.accessibilityLabel = self.expanded ? @"Cerrar menú lateral" : @"Abrir menú lateral";
     self.sync.frame=CGRectMake(x-size/2,first-size/2,size,size);
     CGFloat volY=first+row;
@@ -370,6 +397,8 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     }
     self.sync.layer.cornerRadius=size/2;
     [self.view sendSubviewToBack:self.tab];
+    // The rail must stay BEHIND the button layer, or it hides the purple mark.
+    [self.view.layer insertSublayer:self.rail below:self.tab.layer];
 
 }
 - (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; [self layoutEdge:NO]; }
@@ -457,7 +486,13 @@ static void MBEnsureGuestEdge(void) {
         view.frame=window.bounds;
         [gMBEdgeController layoutEdge:NO];
     }
-    // Do not repeatedly reattach or reorder the view while a touch is active.
+    // Media guests can add sibling views over Edge after playback starts.
+    // Correct z-order only when needed and never during an active control touch.
+    if (view.superview == window && window.subviews.lastObject != view &&
+        !gMBEdgeController.controlIsTouching && !gMBEdgeController.tab.tracking &&
+        !gMBEdgeController.slider.tracking) {
+        [window bringSubviewToFront:view];
+    }
 }
 static void MBInstallGuestEdge(void) {
     if (!MBIsMediaHost()) return;
