@@ -40,7 +40,8 @@ assert 'MediaBloomSpotifyAVPlayersObservedV1' in tweak
 assert 'MBTrackPlayerOnMain(id player)' in tweak
 assert 'MBSpotifyAudioAvailable()) return;' in tweak
 assert 'Spotify · sin ruta AV' in tweak
-assert 'Spotify: sin ruta AV' in tweak
+edge_source = Path("../media-tools/controls/MediaBloomGuestEdge.inc").read_text()
+assert 'Spotify: sin ruta AV' in edge_source
 assert 'MBRefreshVolumeOverlayControls();' in tweak
 assert 'setOutputVolume:' not in tweak
 assert 'AVAudioEngine' not in tweak
