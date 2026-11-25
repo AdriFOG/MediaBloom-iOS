@@ -165,6 +165,15 @@ struct MediaBloomAppearanceSheet: View {
     let onOpenAdvanced: () -> Void
     let onManageMediaLabels: () -> Void
     let onManageAppLibrary: () -> Void
+
+    init(onOpenAdvanced: @escaping () -> Void,
+         onManageMediaLabels: @escaping () -> Void,
+         onManageAppLibrary: @escaping () -> Void = {}) {
+        self.onOpenAdvanced = onOpenAdvanced
+        self.onManageMediaLabels = onManageMediaLabels
+        self.onManageAppLibrary = onManageAppLibrary
+    }
+
     @Environment(\.dismiss) private var dismiss
     @AppStorage("BloomBoxPreferredLanguage", store: LCUtils.appGroupUserDefault)
     private var language = "system"
