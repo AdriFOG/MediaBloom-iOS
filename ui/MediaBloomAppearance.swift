@@ -183,6 +183,7 @@ struct MediaBloomAppearanceSheet: View {
     private var edgeOpacity = 1.0
     @AppStorage("MediaBloomEdgeRightV1", store: LCUtils.appGroupUserDefault)
     private var edgeRight = true
+    @State private var showEdgeAppPicker = false
     @State private var showPhotos = false
     @State private var showFiles = false
     @State private var hasWallpaper = false
@@ -224,6 +225,9 @@ struct MediaBloomAppearanceSheet: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 haptics.refresh(english: english)
+            }
+            .sheet(isPresented: $showEdgeAppPicker) {
+                MBEdgeAppPicker(english: english)
             }
             .sheet(isPresented: $showPhotos) {
                 MBPhotosSelection { image in saveWallpaper(image) }
@@ -339,6 +343,13 @@ struct MediaBloomAppearanceSheet: View {
         Section(header: Text("MediaBloom Edge")) {
             Toggle(t("Menú lateral", "Edge menu"), isOn: $edgeEnabled)
             Toggle(t("Borde derecho", "Right edge"), isOn: $edgeRight)
+            Button { showEdgeAppPicker = true } label: {
+                Label(t("Elegir apps de la muesca", "Choose Edge apps"),
+                      systemImage: "square.grid.2x2")
+            }
+            Text(t("Elige hasta 4 aplicaciones. Puedes cambiar el orden desde la lista.",
+                   "Choose up to 4 apps. You can reorder them from the list."))
+                .font(.footnote).foregroundColor(.secondary)
             HStack {
                 Text(t("Opacidad", "Opacity"))
                 Spacer()
