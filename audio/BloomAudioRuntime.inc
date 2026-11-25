@@ -14,6 +14,7 @@ static NSHashTable *gMBAudioObjects;
 static NSString *gMBAudioGuest;
 static float gMBAudioLastAppliedGain = 1.0f;
 static void MBStartVolumeOverlay(void);
+static void MBRefreshVolumeOverlayControls(void);
 static IMP gMBAudioAVPlayerSetVolume;
 static IMP gMBAudioAVPlayerPlay;
 static IMP gMBAudioAVPlayerSetRate;
@@ -213,10 +214,10 @@ static void MBInstallAudioHooks(void) {
             // Refresh the shared suite before sampling its new gain value.
             [NSUserDefaults.lcSharedDefaults synchronize];
             float gain = MBCurrentGain();
-            if (MBIsSpotifyGuest(gMBAudioGuest) && gMBVolumeController) {
-                // The Spotify bubble becomes usable only if AVFoundation
-                // actually exposed at least one controllable player.
-                [gMBVolumeController updateLabels];
+            if (MBIsSpotifyGuest(gMBAudioGuest)) {
+                // Update the Spotify overlay only if a tracked AVFoundation
+                // player has become available since the previous tick.
+                MBRefreshVolumeOverlayControls();
             }
             if (fabsf(gain - gMBAudioLastAppliedGain) < 0.001f) return;
             gMBAudioLastAppliedGain = gain;
