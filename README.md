@@ -7,9 +7,17 @@
   <a href="https://github.com/AdriFOG/MediaBloom-iOS/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/AdriFOG/MediaBloom-iOS?color=8b5cf6&label=release"></a>
 </p>
 <p align="center">
-  <a href="https://github.com/AdriFOG/MediaBloom-iOS/releases/download/v2.0.1/MediaBloom-SideStore-unsigned.ipa"><strong>Download IPA</strong></a> ·
-  <a href="https://github.com/AdriFOG/MediaBloom-iOS/releases/tag/v2.0.1">Release notes</a>
+  <a href="https://github.com/AdriFOG/MediaBloom-iOS/releases/download/v2.4.0/MediaBloom-SideStore-unsigned.ipa"><strong>Download IPA</strong></a> ·
+  <a href="https://github.com/AdriFOG/MediaBloom-iOS/releases/tag/v2.4.0">Release notes</a>
 </p>
+
+## MediaBloom 2.4 — What's New / Novedades
+
+**Español:** MediaBloom Edge estrena una muesca flotante con animación gelatinosa, menú de volumen individual y hasta **4 aplicaciones personalizables**. Music Haptics incluye mejoras de búsqueda y sincronización, con un indicador de progreso que desaparece al terminar y puede ocultarse deslizando. El launcher ahora permite elegir aplicaciones compartidas de BloomBox, y crear accesos directos al inicio del iPhone mediante **perfiles WebClip**, usando el enlace exclusivo `bloomboxmedia://`.
+
+**English:** MediaBloom 2.4 adds the elastic **Edge** quick launcher with up to four ordered shortcuts and app-specific volume controls. **Music Haptics** gains faster lookup, resync and temporary swipe-away progress. Choose shared BloomBox apps for the MediaBloom home and generate iPhone Home Screen **WebClip profiles** that always target `bloomboxmedia://`.
+
+Only **shared and unlocked** apps are available to MediaBloom. An iOS configuration profile needs to be installed through Settings for each Home Screen WebClip. Apps and data are not copied from BloomBox. MediaBloom remains a separate **multimedia-only** host; Music Haptics compatibility varies by song and app.
 
 ## Meet Bloom 🎧
 
@@ -19,7 +27,7 @@ MediaBloom's new app icon features Bloom wearing headphones, with ten vector lay
 
 The signed-ready (unsigned) IPA is published in **Releases**, and Actions also produces experimental artifacts named
 **MediaBloom-SideStore-unsigned.ipa**. It is intended to be signed with SideStore
-or a compatible installer before installation. The current stable release is **v2.0.1 — Meet Bloom**.
+or a compatible installer before installation. The current stable release is **v2.4.0 — Edge + Music Haptics + WebClips**.
 
 - Standalone host ID: `com.kdt.BloomBoxMedia`
 - Standalone launch URL: `bloomboxmedia://`
