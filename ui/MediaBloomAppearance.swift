@@ -164,6 +164,7 @@ private struct MBPhotosSelection: UIViewControllerRepresentable {
 struct MediaBloomAppearanceSheet: View {
     let onOpenAdvanced: () -> Void
     let onManageMediaLabels: () -> Void
+    let onManageAppLibrary: () -> Void
     @Environment(\.dismiss) private var dismiss
     @AppStorage("BloomBoxPreferredLanguage", store: LCUtils.appGroupUserDefault)
     private var language = "system"
@@ -554,6 +555,13 @@ struct MediaBloomAppearanceSheet: View {
 
     private var mediaTagsSection: some View {
         Section(header: Text(t("Etiquetas compartidas", "Shared media labels"))) {
+            Button(action: onManageAppLibrary) {
+                Label(t("Elegir apps desde BloomBox", "Choose apps from BloomBox"),
+                      systemImage: "square.grid.2x2")
+            }
+            Text(t("Selecciona apps compartidas para MediaBloom y crea accesos al inicio del iPhone.",
+                   "Choose shared apps for MediaBloom and create iPhone Home Screen icons."))
+                .font(.footnote).foregroundColor(.secondary)
             Button(action: onManageMediaLabels) {
                 Label(t("Organizar etiquetas de apps", "Manage app labels"),
                       systemImage: "tag")
