@@ -98,6 +98,10 @@ def main() -> None:
         info = plistlib.load(fh)
     info["CFBundleDisplayName"] = "BloomBox Media"
     info["CFBundleName"] = "BloomBox Media"
+    # Independent MediaBloom version. The upstream BloomBox host provides
+    # 3.3.1/33001; keep a higher build number for existing installations.
+    info["CFBundleShortVersionString"] = "2.4.0"
+    info["CFBundleVersion"] = "34000"
     info["BloomBoxMediaEdition"] = True
     info["LSApplicationCategoryType"] = "public.app-category.entertainment"
     info["GCSupportsGameMode"] = False
