@@ -71,26 +71,45 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
 }
 @interface MBEdgeButton : UIButton
 @property(nonatomic,assign) CGFloat touchPadding;
+@property(nonatomic,strong) CAShapeLayer *railShape;
+@property(nonatomic,assign) BOOL railExpanded;
 @end
 @implementation MBEdgeButton
 - (BOOL)pointInside:(CGPoint)p withEvent:(UIEvent *)event {
-    return CGRectContainsPoint(CGRectInset(self.bounds,-self.touchPadding,-self.touchPadding),p);
+    if (!self.railShape) {
+        return CGRectContainsPoint(CGRectInset(self.bounds,-self.touchPadding,-self.touchPadding),p);
+    }
+    // The visible rail and its touch target belong to the SAME button.
+    // Convert into the drawing layer's own local coordinates, not screen coordinates.
+    CAShapeLayer *shape = self.railShape;
+    CGPoint local = [shape convertPoint:p fromLayer:self.layer];
+    CAShapeLayer *visible = (CAShapeLayer *)shape.presentationLayer;
+    CGPathRef path = visible.path ?: shape.path;
+    if (!path) return NO;
+    if (CGPathContainsPoint(path,NULL,local,false)) return YES;
+    if (self.railExpanded) return NO;
+    // Only a small tolerance around the visible closed tab, never a remote hitbox.
+    return CGRectContainsPoint(CGRectInset(CGPathGetPathBoundingBox(path),-14,-7),local);
 }
 @end
 
 // A subview of the actual guest window, not a second transparent UIWindow.
 // UIKit resolves touches normally within the guest's own responder hierarchy.
 @interface MBEdgeTouchView : UIView
-@property(nonatomic,weak) UIView *railClose;
-@property(nonatomic,strong) CAShapeLayer *railShape;
+@property(nonatomic,copy) void (^boundsDidChange)(void);
+@property(nonatomic,assign) CGRect lastLayoutBounds;
 @end
 @implementation MBEdgeTouchView
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *hit = [super hitTest:point withEvent:event];
-    if (hit == self) return nil;
-    if (hit == self.railClose &&
-        (!self.railShape.path || !CGPathContainsPoint(self.railShape.path,NULL,point,false))) return nil;
-    return hit;
+    return hit == self ? nil : hit;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    if (!CGRectEqualToRect(self.lastLayoutBounds,self.bounds)) {
+        self.lastLayoutBounds = self.bounds;
+        if (self.boundsDidChange) self.boundsDidChange();
+    }
 }
 @end
 
@@ -103,8 +122,7 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 
 @interface MBEdgeController : UIViewController
 @property(nonatomic,strong) CAShapeLayer *rail;
-@property(nonatomic,strong) UIButton *tab;
-@property(nonatomic,strong) UIButton *railClose;
+@property(nonatomic,strong) MBEdgeButton *tab;
 @property(nonatomic,strong) UIButton *sync;
 @property(nonatomic,strong) UIButton *speaker;
 @property(nonatomic,strong) UIView *volumeCapsule;
@@ -137,12 +155,11 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     self.anchor = .54;
     self.rail = [CAShapeLayer layer];
     self.rail.fillColor = UIColor.blackColor.CGColor;
-    [self.view.layer addSublayer:self.rail];
-    self.railClose = [self button:@"" color:UIColor.clearColor label:@"Cerrar menú lateral" action:@selector(toggle:)];
-    [self.view addSubview:self.railClose];
-    ((MBEdgeTouchView *)self.view).railClose = self.railClose;
-    ((MBEdgeTouchView *)self.view).railShape = self.rail;
-    self.tab = [self button:@"line.3.horizontal" color:UIColor.clearColor label:@"MediaBloom Edge" action:@selector(toggle:)];
+    self.tab = (MBEdgeButton *)[self button:@"" color:UIColor.clearColor label:@"MediaBloom Edge" action:@selector(toggle:)];
+    self.tab.railShape = self.rail;
+    self.tab.layer.cornerRadius = 0;
+    self.tab.clipsToBounds = NO;
+    [self.tab.layer addSublayer:self.rail];
     [self.tab setImage:nil forState:UIControlStateNormal];
     UIView *mark = [[UIView alloc] initWithFrame:CGRectMake(9,20,2,25)];
     mark.tag = 101;
@@ -178,6 +195,8 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     [self.volumeCapsule insertSubview:self.volumeUnavailable belowSubview:self.speaker];
     self.shortcuts = [NSMutableArray array];
     self.apps = @[];
+    __weak MBEdgeController *weakSelf = self;
+    ((MBEdgeTouchView *)self.view).boundsDidChange = ^{ [weakSelf layoutEdge:NO]; };
     // No competing long-press or drag recognizer on the opening button.
 }
 - (void)refreshGuestGain {
@@ -236,7 +255,7 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     }
 }
 - (UIBezierPath *)pathWidth:(CGFloat)w height:(CGFloat)h center:(CGFloat)cy {
-    CGFloat edge = self.right ? self.view.bounds.size.width : 0;
+    CGFloat edge = self.right ? CGRectGetMaxX(self.rail.bounds) : CGRectGetMinX(self.rail.bounds);
     CGFloat sign = self.right ? -1 : 1, top = cy-h/2;
     CGPoint (^pt)(CGFloat,CGFloat) = ^CGPoint(CGFloat x,CGFloat y){return CGPointMake(edge+sign*x*w,top+y*h);};
     UIBezierPath *p = [UIBezierPath bezierPath];
@@ -260,6 +279,14 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     CGFloat fullHeight=MIN(426,h-16);
     CGFloat scale=MIN(1,fullHeight/426), cy=MAX(fullHeight/2+8,MIN(h-fullHeight/2-8,h*self.anchor));
     CGFloat height=self.expanded?fullHeight:80, width=self.expanded?79:12;
+    // Fix the layer's frame explicitly: a free-standing CAShapeLayer may
+    // otherwise draw outside zero-sized bounds while hit testing elsewhere.
+    self.tab.frame = bounds;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    self.rail.frame = self.tab.bounds;
+    [CATransaction commit];
+    self.tab.railExpanded = self.expanded;
     UIBezierPath *p=[self pathWidth:width height:height center:cy];
     if (animated && self.rail.path) {
         CABasicAnimation *m=[CABasicAnimation animationWithKeyPath:@"path"];
@@ -272,13 +299,11 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     [CATransaction begin]; [CATransaction setDisableActions:YES]; self.rail.path=p.CGPath; [CATransaction commit];
     CGFloat x=self.right?w-38:38, size=45*scale;
     CGFloat row=55*scale, first=cy-145*scale;
-    self.tab.frame=CGRectMake(self.right?w-60:0,cy-48,60,96);
     UIView *mark = [self.tab viewWithTag:101];
-    mark.frame = CGRectMake(self.right?54:5,35,2,25);
-    self.tab.alpha=self.expanded?0:1; self.tab.userInteractionEnabled=!self.expanded;
-    self.railClose.frame=CGRectMake(self.right?w-width:0,cy-height/2,width,height);
-    self.railClose.hidden=!self.expanded;
-    self.railClose.userInteractionEnabled=self.expanded;
+    mark.frame = CGRectMake(self.right?w-6:5,cy-12.5,2,25);
+    mark.alpha = self.expanded ? 0 : 1;
+    self.tab.accessibilityLabel = self.expanded ? @"Cerrar menú lateral" : @"Abrir menú lateral";
+    self.tab.accessibilityFrameInContainerSpace = CGRectIntersection(bounds,CGRectInset(CGPathGetPathBoundingBox(p.CGPath),-14,-7));
     self.sync.frame=CGRectMake(x-size/2,first-size/2,size,size);
     CGFloat volY=first+row;
     CGFloat capWidth=self.volumeExpanded?MIN(215,w-32):size;
@@ -298,7 +323,7 @@ static BOOL MBEdgeLocalGainAvailable(void) {
         b.layer.cornerRadius=size*.23; b.alpha=self.expanded?1:0; b.userInteractionEnabled=self.expanded;
     }
     self.sync.layer.cornerRadius=size/2;
-    [self.view bringSubviewToFront:self.tab];
+    [self.view sendSubviewToBack:self.tab];
 
 }
 - (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; [self layoutEdge:NO]; }
