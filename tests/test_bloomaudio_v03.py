@@ -31,6 +31,20 @@ assert b"BloomBoxMediaEdition" in host
 assert "MPVolumeView" not in tweak
 assert "outputVolume" not in tweak
 
+# Spotify support is strictly opt-in and must never pretend that a
+# proprietary audio pipeline is a controllable AVFoundation player.
+assert 'com.spotify.client' in tweak
+assert 'MBIsSpotifyGuest(NSString *identifier)' in tweak
+assert 'MBSpotifyAudioAvailable(void)' in tweak
+assert 'MediaBloomSpotifyAVPlayersObservedV1' in tweak
+assert 'MBTrackPlayerOnMain(id player)' in tweak
+assert 'MBSpotifyAudioAvailable()) return;' in tweak
+assert 'Spotify · sin ruta AV' in tweak
+assert 'Spotify: sin ruta AV' in tweak
+assert 'MBRefreshVolumeOverlayControls();' in tweak
+assert 'setOutputVolume:' not in tweak
+assert 'AVAudioEngine' not in tweak
+
 # More noticeable perceptual attenuation without ever amplifying.
 def gain(x):
     return 0.0 if x <= 0.0 else x**2.6
