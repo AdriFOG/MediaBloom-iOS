@@ -14,6 +14,24 @@ private enum MBReferenceStyle {
     static let pill = Color(red: 0.890, green: 0.891, blue: 0.879)
 }
 
+private enum MBMediaHomeTile: Identifiable {
+    case automatic(MediaBloomHomeApp)
+    case manual(LCAppModel)
+
+    var id: String {
+        switch self {
+        case .automatic(let app): return app.id.lowercased()
+        case .manual(let app): return app.bundleIdentifier.lowercased()
+        }
+    }
+    var name: String {
+        switch self {
+        case .automatic(let app): return app.name
+        case .manual(let app): return app.displayName
+        }
+    }
+}
+
 struct MediaBloomReferenceView: View {
     @ObservedObject var model: MediaBloomHomeModel
     var allSharedGuests: [LCAppModel] = []
@@ -28,6 +46,9 @@ struct MediaBloomReferenceView: View {
     @State private var appPage = 0
     @State private var showAppearance = false
     @State private var showMediaLabels = false
+    @State private var showLibraryPicker = false
+    @AppStorage("MediaBloomLauncherSelectionRevisionV1", store: LCUtils.appGroupUserDefault)
+    private var launcherSelectionRevision = 0
     @State private var individualApp: MediaBloomHomeApp?
     @State private var wallpaperImage: UIImage?
     @State private var previousMasterVolume = 0.85
@@ -74,7 +95,63 @@ struct MediaBloomReferenceView: View {
         musicApps.first(where: { $0.id.lowercased() == "com.google.ios.youtubemusic" }) ??
         musicApps.first
     }
-    private var pageCount: Int { max(1, (model.visibleApps.count + 5) / 6) }
+    private var pageCount: Int { max(1, (homeTiles.count + 5) / 6) }
+
+    private var homeTiles: [MBMediaHomeTile] {
+        _ = launcherSelectionRevision
+        let automatic = model.visibleApps
+        guard let chosen = LCUtils.appGroupUserDefault.stringArray(
+            forKey: "MediaBloomLauncherAppIDsV1") else {
+            return automatic.map { .automatic($0) }
+        }
+        let automaticByID = Dictionary(automatic.map { ($0.id.lowercased(), $0) },
+                                       uniquingKeysWith: { first, _ in first })
+        let allByID = Dictionary(allSharedGuests.map { ($0.bundleIdentifier.lowercased(), $0) },
+                                uniquingKeysWith: { first, _ in first })
+        let term = model.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        var seen = Set<String>()
+        return chosen.compactMap { originalID -> MBMediaHomeTile? in
+            let id = originalID.lowercased()
+            guard seen.insert(id).inserted else { return nil }
+            if let app = automaticByID[id] { return .automatic(app) }
+            guard let app = allByID[id], app.uiIsShared,
+                  !app.appInfo.isHidden, !app.appInfo.isLocked,
+                  term.isEmpty || app.displayName.localizedCaseInsensitiveContains(term)
+            else { return nil }
+            return .manual(app)
+        }
+    }
+
+    private func openManualApp(_ app: LCAppModel) {
+        guard app.uiIsShared, !app.appInfo.isHidden, !app.appInfo.isLocked,
+              let path = app.appInfo.relativeBundlePath, !path.isEmpty else { return }
+        var url = URLComponents()
+        url.scheme = "bloomboxmedia"
+        url.host = "livecontainer-launch"
+        var items = [URLQueryItem(name: "bundle-name", value: path)]
+        if let folder = app.uiSelectedContainer?.folderName, !folder.isEmpty {
+            items.append(URLQueryItem(name: "container-folder-name", value: folder))
+        }
+        url.queryItems = items
+        if let destination = url.url { UIApplication.shared.open(destination) }
+    }
+
+    private func openHomeTile(_ item: MBMediaHomeTile) {
+        switch item {
+        case .automatic(let app):
+            model.select(app)
+            model.onOpenApp(app.id)
+        case .manual(let app):
+            openManualApp(app)
+        }
+    }
+
+    private func tileVolumeText(_ item: MBMediaHomeTile) -> String {
+        switch item {
+        case .automatic(let app): return volumeText(for: app)
+        case .manual: return t("Abrir", "Open")
+        }
+    }
     private var artistSummary: String {
         let count = model.favoriteArtists.count
         if english { return count == 1 ? "your 1 artist" : "your \(count) artists" }
@@ -113,10 +190,20 @@ struct MediaBloomReferenceView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                         showMediaLabels = true
                     }
+                },
+                onManageAppLibrary: {
+                    showAppearance = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        showLibraryPicker = true
+                    }
                 })
         }
         .sheet(isPresented: $showMediaLabels) {
             MBMediaTagEditor(apps: allSharedGuests, english: english)
+        }
+        .sheet(isPresented: $showLibraryPicker) {
+            MBMediaLibraryPicker(apps: allSharedGuests, defaults: model.apps.map { $0.id },
+                                 english: english)
         }
         .sheet(item: $individualApp) { app in individualVolumeEditor(app) }
         .onAppear {
@@ -144,6 +231,7 @@ struct MediaBloomReferenceView: View {
         }
         .onChange(of: model.searchText) { _ in appPage = 0 }
         .onChange(of: model.apps.map { $0.id }) { _ in appPage = 0 }
+        .onChange(of: launcherSelectionRevision) { _ in appPage = 0 }
     }
 
     private func portraitLayout(width: CGFloat) -> some View {
@@ -302,6 +390,13 @@ struct MediaBloomReferenceView: View {
                 }
                 .buttonStyle(.plain)
             }
+            Button { showLibraryPicker = true } label: {
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(panelInk.opacity(0.75))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(t("Elegir apps de BloomBox", "Choose BloomBox apps"))
             Button { showAppearance = true } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 15, weight: .medium))
