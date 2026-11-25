@@ -22,6 +22,10 @@ static NSInteger MBSpotifyActiveAVPlayers(void);
 static NSInteger MBSpotifyRunningEngines(void);
 static void MBSpotifyReportAudioState(BOOL force);
 static void MBApplySpotifyEngineGain(void);
+static void MBSpotifyAUInstallHooks(void);
+static void MBSpotifyAUPublishStatus(void);
+static void MBSpotifyAUUpdateGain(float gain);
+static BOOL MBSpotifyAUHasConfirmedPCM(void);
 static float gMBAudioLastAppliedGain = 1.0f;
 static void MBStartVolumeOverlay(void);
 static void MBRefreshVolumeOverlayControls(void);
@@ -57,7 +61,8 @@ static BOOL MBIsSupportedGuest(NSString *identifier) {
 // Only expose volume controls when an observed AV player is playing or
 // a Spotify-hosted AVAudioEngine is running. Neither guarantees audibility.
 static BOOL MBSpotifyAudioAvailable(void) {
-    return MBSpotifyActiveAVPlayers() > 0 || MBSpotifyRunningEngines() > 0;
+    return MBSpotifyActiveAVPlayers() > 0 || MBSpotifyRunningEngines() > 0 ||
+           MBSpotifyAUHasConfirmedPCM();
 }
 
 static BOOL MBIsMediaHost(void) {
@@ -107,7 +112,10 @@ static void MBApplyLiveGain(void) {
     for (id player in gMBAudioObjects.allObjects) {
         MBSetOriginalVolume(player, MBRequestedBaseVolume(player));
     }
-    if (MBIsSpotifyGuest(gMBAudioGuest)) MBApplySpotifyEngineGain();
+    if (MBIsSpotifyGuest(gMBAudioGuest)) {
+        MBApplySpotifyEngineGain();
+        MBSpotifyAUUpdateGain(MBCurrentGain());
+    }
 }
 
 // Spotify audio diagnosis: distinguish real playback from unrelated UI/ad
@@ -376,6 +384,8 @@ static void MBInstallAudioHooks(void) {
                 (IMP)MBSpotifyEngineStart);
             gMBSpotifyEngineStop = MBHookInstanceMethod(
                 @"AVAudioEngine", @selector(stop), (IMP)MBSpotifyEngineStop);
+            MBSpotifyAUInstallHooks();
+            MBSpotifyAUPublishStatus();
             MBSpotifyReportAudioState(YES);
         }
 
@@ -388,6 +398,7 @@ static void MBInstallAudioHooks(void) {
             float gain = MBCurrentGain();
             if (MBIsSpotifyGuest(gMBAudioGuest)) {
                 MBSpotifyReportAudioState(NO);
+                MBSpotifyAUPublishStatus();
                 MBRefreshVolumeOverlayControls();
             }
             if (fabsf(gain - gMBAudioLastAppliedGain) < 0.001f) return;
