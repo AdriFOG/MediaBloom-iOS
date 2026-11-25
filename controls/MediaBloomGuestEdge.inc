@@ -130,6 +130,7 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 @property(nonatomic,strong) UITapGestureRecognizer *outsideTap;
 @property(nonatomic,weak) UIWindow *activityWindow;
 @property(nonatomic,assign) BOOL controlIsTouching;
+@property(nonatomic,assign) BOOL lastDrawnExpanded;
 - (void)layoutEdge:(BOOL)animated;
 - (void)closeEdge;
 - (void)restartIdleTimer;
@@ -355,15 +356,53 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     self.rail.frame = bounds;
     [CATransaction commit];
     UIBezierPath *p=[self pathWidth:width height:height center:cy];
-    if (animated && self.rail.path) {
-        CABasicAnimation *m=[CABasicAnimation animationWithKeyPath:@"path"];
+    // Elastic contour morph: native GPU path keyframes, with a restrained
+    // overshoot / recoil / settle. Shapes share control points, so they
+    // interpolate smoothly without rasterized snapshots or repeated timers.
+    BOOL stateChanged = self.expanded != self.lastDrawnExpanded;
+    if (animated && stateChanged && self.rail.path &&
+        !UIAccessibilityIsReduceMotionEnabled()) {
         CAShapeLayer *presentation=(CAShapeLayer *)self.rail.presentationLayer;
-        m.fromValue=(__bridge id)(presentation.path ?: self.rail.path);
-        m.toValue=(__bridge id)p.CGPath; m.duration=.40;
-        m.timingFunction=[CAMediaTimingFunction functionWithControlPoints:.20 :.9 :.25 :1.0];
+        CGPathRef current = presentation.path ?: self.rail.path;
+        CAKeyframeAnimation *m=[CAKeyframeAnimation animationWithKeyPath:@"path"];
+        if (self.expanded) {
+            CGFloat overshootHeight=MIN(h-12,height*1.045);
+            m.values=@[
+                (__bridge id)current,
+                (__bridge id)[self pathWidth:width*.72 height:height*.72 center:cy].CGPath,
+                (__bridge id)[self pathWidth:width*1.16 height:overshootHeight center:cy].CGPath,
+                (__bridge id)[self pathWidth:width*.94 height:height*.975 center:cy].CGPath,
+                (__bridge id)[self pathWidth:width*1.025 height:height center:cy].CGPath,
+                (__bridge id)p.CGPath
+            ];
+            m.duration=.68;
+        } else {
+            m.values=@[
+                (__bridge id)current,
+                (__bridge id)[self pathWidth:35 height:fullHeight*.58 center:cy].CGPath,
+                (__bridge id)[self pathWidth:7 height:69 center:cy].CGPath,
+                (__bridge id)[self pathWidth:16 height:86 center:cy].CGPath,
+                (__bridge id)[self pathWidth:11 height:78 center:cy].CGPath,
+                (__bridge id)p.CGPath
+            ];
+            m.duration=.54;
+        }
+        m.keyTimes=@[@0,@.34,@.59,@.76,@.90,@1];
+        m.calculationMode=kCAAnimationCubic;
+        m.timingFunctions=@[
+            [CAMediaTimingFunction functionWithControlPoints:.20 :.65 :.30 :1],
+            [CAMediaTimingFunction functionWithControlPoints:.20 :0 :.32 :1],
+            [CAMediaTimingFunction functionWithControlPoints:.25 :0 :.35 :1],
+            [CAMediaTimingFunction functionWithControlPoints:.25 :0 :.35 :1],
+            [CAMediaTimingFunction functionWithControlPoints:.25 :0 :.35 :1]
+        ];
         [self.rail addAnimation:m forKey:@"edgeMorph"];
     }
-    [CATransaction begin]; [CATransaction setDisableActions:YES]; self.rail.path=p.CGPath; [CATransaction commit];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    self.rail.path=p.CGPath;
+    [CATransaction commit];
+    self.lastDrawnExpanded = self.expanded;
     CGFloat x=self.right?w-38:38, size=45*scale;
     CGFloat row=55*scale, first=cy-145*scale;
     CGRect contour = CGPathGetPathBoundingBox(p.CGPath);
@@ -402,8 +441,65 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 
 }
 - (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; [self layoutEdge:NO]; }
+// The menu contents follow the expanding contour in a short cascade. Each
+// icon has its own bounce, so the menu doesn't look like one sliding rectangle.
+// Core Animation keeps the work off the main thread after setup.
+- (void)animateEdgeControl:(UIView *)control index:(NSUInteger)index opening:(BOOL)opening {
+    if (!control) return;
+    [control.layer removeAnimationForKey:@"edgeContent"];
+    CGFloat direction = self.right ? 1 : -1;
+    CATransform3D tucked=CATransform3DConcat(
+        CATransform3DMakeTranslation(direction*17,0,0),
+        CATransform3DMakeScale(.72,.72,1));
+    CATransform3D bounce=CATransform3DMakeScale(1.075,1.075,1);
+    CATransform3D settle=CATransform3DMakeScale(.985,.985,1);
+    CATransform3D neutral=CATransform3DIdentity;
+    CAKeyframeAnimation *shape=[CAKeyframeAnimation animationWithKeyPath:@"transform"];
+    shape.values=opening ? @[
+        [NSValue valueWithCATransform3D:tucked],
+        [NSValue valueWithCATransform3D:CATransform3DMakeScale(.94,.94,1)],
+        [NSValue valueWithCATransform3D:bounce],
+        [NSValue valueWithCATransform3D:settle],
+        [NSValue valueWithCATransform3D:neutral]
+    ] : @[
+        [NSValue valueWithCATransform3D:neutral],
+        [NSValue valueWithCATransform3D:bounce],
+        [NSValue valueWithCATransform3D:CATransform3DMakeScale(.86,.86,1)],
+        [NSValue valueWithCATransform3D:tucked],
+        [NSValue valueWithCATransform3D:tucked]
+    ];
+    shape.keyTimes=@[@0,@.40,@.64,@.82,@1];
+    shape.calculationMode=kCAAnimationLinear;
+    CAKeyframeAnimation *fade=[CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+    fade.values=opening ? @[@0,@.68,@1,@1,@1] : @[@1,@1,@.65,@0,@0];
+    fade.keyTimes=shape.keyTimes;
+    CAAnimationGroup *group=[CAAnimationGroup animation];
+    group.animations=@[shape,fade];
+    group.duration=opening ? .44 : .25;
+    group.beginTime=CACurrentMediaTime() + (opening ? .09 + index*.045 : index*.012);
+    group.fillMode=kCAFillModeBackwards;
+    group.removedOnCompletion=YES;
+    [control.layer addAnimation:group forKey:@"edgeContent"];
+}
 - (void)animate {
-    [UIView animateWithDuration:.42 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:0 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{ [self layoutEdge:YES]; } completion:nil];
+    BOOL stateChanged = self.expanded != self.lastDrawnExpanded;
+    if (!stateChanged) {
+        // Only the inner volume capsule changes: keep the outer rail still.
+        [UIView animateWithDuration:.35 delay:0 usingSpringWithDamping:.78
+              initialSpringVelocity:.3 options:UIViewAnimationOptionBeginFromCurrentState|
+              UIViewAnimationOptionAllowUserInteraction animations:^{
+            [self layoutEdge:NO];
+        } completion:nil];
+        return;
+    }
+    BOOL reducedMotion = UIAccessibilityIsReduceMotionEnabled();
+    [self layoutEdge:!reducedMotion];
+    if (reducedMotion) return;
+    BOOL opening=self.expanded;
+    [self animateEdgeControl:self.sync index:0 opening:opening];
+    [self animateEdgeControl:self.volumeCapsule index:1 opening:opening];
+    for (NSUInteger i=0;i<self.shortcuts.count;i++)
+        [self animateEdgeControl:self.shortcuts[i] index:i+2 opening:opening];
 }
 - (void)toggle:(id)sender {
     [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
