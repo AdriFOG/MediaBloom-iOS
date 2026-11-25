@@ -78,6 +78,29 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
 }
 @end
 
+// A subview of the actual guest window, not a second transparent UIWindow.
+// UIKit resolves touches normally within the guest's own responder hierarchy.
+@interface MBEdgeTouchView : UIView
+@property(nonatomic,weak) UIView *railClose;
+@property(nonatomic,strong) CAShapeLayer *railShape;
+@end
+@implementation MBEdgeTouchView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    if (hit == self) return nil;
+    if (hit == self.railClose &&
+        (!self.railShape.path || !CGPathContainsPoint(self.railShape.path,NULL,point,false))) return nil;
+    return hit;
+}
+@end
+
+static BOOL MBEdgeLocalGainAvailable(void) {
+    return gMBAudioGuest.length && gMBAudioObjects != nil &&
+           [gMBAudioGuest isEqualToString:NSUserDefaults.lcGuestAppId.lowercaseString] &&
+           [NSUserDefaults.lcSharedDefaults boolForKey:@"MediaBloomAudioProbeEnabledV1"] &&
+           (gMBAudioAVPlayerSetVolume || gMBAudioAVAudioPlayerSetVolume || gMBAudioAVRendererSetVolume);
+}
+
 @interface MBEdgeController : UIViewController
 @property(nonatomic,strong) CAShapeLayer *rail;
 @property(nonatomic,strong) UIButton *tab;
@@ -85,7 +108,8 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
 @property(nonatomic,strong) UIButton *sync;
 @property(nonatomic,strong) UIButton *speaker;
 @property(nonatomic,strong) UIView *volumeCapsule;
-@property(nonatomic,strong) UIView *slider;
+@property(nonatomic,strong) UISlider *slider;
+@property(nonatomic,strong) UILabel *volumeUnavailable;
 @property(nonatomic,strong) NSMutableArray<UIButton *> *shortcuts;
 @property(nonatomic,strong) NSArray<NSDictionary *> *apps;
 @property(nonatomic,assign) BOOL expanded;
@@ -107,7 +131,8 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
     return b;
 }
 - (void)loadView {
-    self.view = [[UIView alloc] initWithFrame:CGRectZero];
+    self.view = [[MBEdgeTouchView alloc] initWithFrame:CGRectZero];
+    self.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.view.backgroundColor = UIColor.clearColor;
     self.anchor = .54;
     self.rail = [CAShapeLayer layer];
@@ -115,6 +140,8 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
     [self.view.layer addSublayer:self.rail];
     self.railClose = [self button:@"" color:UIColor.clearColor label:@"Cerrar menú lateral" action:@selector(toggle:)];
     [self.view addSubview:self.railClose];
+    ((MBEdgeTouchView *)self.view).railClose = self.railClose;
+    ((MBEdgeTouchView *)self.view).railShape = self.rail;
     self.tab = [self button:@"line.3.horizontal" color:UIColor.clearColor label:@"MediaBloom Edge" action:@selector(toggle:)];
     [self.tab setImage:nil forState:UIControlStateNormal];
     UIView *mark = [[UIView alloc] initWithFrame:CGRectMake(9,20,2,25)];
@@ -133,21 +160,49 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
     [self.view addSubview:self.volumeCapsule];
     self.speaker = [self button:@"speaker.wave.2.fill" color:UIColor.clearColor label:@"Volumen" action:@selector(toggleVolume:)];
     [self.volumeCapsule addSubview:self.speaker];
-    dlopen("/System/Library/Frameworks/MediaPlayer.framework/MediaPlayer", RTLD_LAZY);
-    Class volumeClass = NSClassFromString(@"MPVolumeView");
-    if (volumeClass) {
-        self.slider = [[volumeClass alloc] initWithFrame:CGRectZero];
-        SEL route = NSSelectorFromString(@"setShowsRouteButton:");
-        if ([self.slider respondsToSelector:route]) ((void(*)(id,SEL,BOOL))objc_msgSend)(self.slider,route,NO);
-        self.slider.tintColor = UIColor.systemPurpleColor;
-        [self.volumeCapsule insertSubview:self.slider belowSubview:self.speaker];
-    }
+    self.slider = [[UISlider alloc] initWithFrame:CGRectZero];
+    self.slider.minimumValue = 0;
+    self.slider.maximumValue = 1;
+    self.slider.continuous = YES;
+    self.slider.minimumTrackTintColor = UIColor.systemPurpleColor;
+    self.slider.maximumTrackTintColor = [UIColor colorWithWhite:1 alpha:.24];
+    self.slider.accessibilityLabel = @"Volumen individual de MediaBloom";
+    [self.slider addTarget:self action:@selector(changeGuestGain:) forControlEvents:UIControlEventValueChanged];
+    [self.volumeCapsule insertSubview:self.slider belowSubview:self.speaker];
+    self.volumeUnavailable = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.volumeUnavailable.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+    self.volumeUnavailable.textColor = UIColor.whiteColor;
+    self.volumeUnavailable.textAlignment = NSTextAlignmentCenter;
+    self.volumeUnavailable.adjustsFontSizeToFitWidth = YES;
+    self.volumeUnavailable.userInteractionEnabled = NO;
+    [self.volumeCapsule insertSubview:self.volumeUnavailable belowSubview:self.speaker];
     self.shortcuts = [NSMutableArray array];
     self.apps = @[];
-    UILongPressGestureRecognizer *pan = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
-    pan.minimumPressDuration = .35;
-    pan.cancelsTouchesInView = YES;
-    [self.tab addGestureRecognizer:pan];
+    // No competing long-press or drag recognizer on the opening button.
+}
+- (void)refreshGuestGain {
+    NSString *guest = NSUserDefaults.lcGuestAppId.lowercaseString;
+    NSString *key = [@"MediaBloomAudioGainV1." stringByAppendingString:guest ?: @""];
+    id saved = [NSUserDefaults.lcSharedDefaults objectForKey:key];
+    self.slider.value = [saved respondsToSelector:@selector(floatValue)] ? MBClampVolume([saved floatValue]) : 1;
+    BOOL available = MBEdgeLocalGainAvailable();
+    self.slider.enabled = available;
+    self.volumeUnavailable.text = MBIsSupportedGuest(guest) ? @"Activa BloomAudio" : @"No compatible";
+    [self updateSpeakerIcon];
+}
+- (void)updateSpeakerIcon {
+    float v=self.slider.value;
+    NSString *symbol=v<.001?@"speaker.slash.fill":v<.34?@"speaker.wave.1.fill":v<.67?@"speaker.wave.2.fill":@"speaker.wave.3.fill";
+    [self.speaker setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
+    self.slider.accessibilityValue = [NSString stringWithFormat:@"%d%%",(int)lroundf(v*100)];
+}
+- (void)changeGuestGain:(UISlider *)slider {
+    if (!MBEdgeLocalGainAvailable()) return;
+    NSString *key = [@"MediaBloomAudioGainV1." stringByAppendingString:gMBAudioGuest];
+    [NSUserDefaults.lcSharedDefaults setFloat:MBClampVolume(slider.value) forKey:key];
+    // Never write the master gain or iOS output volume from Edge.
+    MBApplyLiveGain();
+    [self updateSpeakerIcon];
 }
 - (void)refreshApps {
     NSArray *all = MBEdgeApps();
@@ -217,9 +272,9 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
     [CATransaction begin]; [CATransaction setDisableActions:YES]; self.rail.path=p.CGPath; [CATransaction commit];
     CGFloat x=self.right?w-38:38, size=45*scale;
     CGFloat row=55*scale, first=cy-145*scale;
-    self.tab.frame=CGRectMake(self.right?w-48:0,cy-48,48,96);
+    self.tab.frame=CGRectMake(self.right?w-60:0,cy-48,60,96);
     UIView *mark = [self.tab viewWithTag:101];
-    mark.frame = CGRectMake(self.right?42:5,35,2,25);
+    mark.frame = CGRectMake(self.right?54:5,35,2,25);
     self.tab.alpha=self.expanded?0:1; self.tab.userInteractionEnabled=!self.expanded;
     self.railClose.frame=CGRectMake(self.right?w-width:0,cy-height/2,width,height);
     self.railClose.hidden=!self.expanded;
@@ -231,8 +286,10 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
     self.volumeCapsule.layer.cornerRadius=size/2;
     self.speaker.frame=CGRectMake(self.right?capWidth-size:0,0,size,size);
     self.slider.frame=CGRectMake(self.right?12:size+4,0,MAX(0,capWidth-size-16),size);
-    self.slider.alpha=self.volumeExpanded?1:0;
-    self.slider.userInteractionEnabled=self.volumeExpanded;
+    self.slider.alpha=self.volumeExpanded && self.slider.enabled?1:0;
+    self.slider.userInteractionEnabled=self.volumeExpanded && self.slider.enabled;
+    self.volumeUnavailable.frame=self.slider.frame;
+    self.volumeUnavailable.alpha=self.volumeExpanded && !self.slider.enabled?1:0;
     self.sync.alpha=self.expanded?1:0; self.sync.userInteractionEnabled=self.expanded;
     self.volumeCapsule.alpha=self.expanded?1:0; self.volumeCapsule.userInteractionEnabled=self.expanded;
     for (NSUInteger i=0;i<self.shortcuts.count;i++) {
@@ -242,20 +299,30 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
     }
     self.sync.layer.cornerRadius=size/2;
     [self.view bringSubviewToFront:self.tab];
-    [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
+
 }
-- (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return self.right ? UIRectEdgeRight : UIRectEdgeLeft; }
 - (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; [self layoutEdge:NO]; }
 - (void)animate {
     [UIView animateWithDuration:.42 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:0 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{ [self layoutEdge:YES]; } completion:nil];
 }
 - (void)toggle:(id)sender {
-    if (!self.expanded) [self refreshApps];
+    BOOL opening=!self.expanded;
     self.expanded=!self.expanded; if (!self.expanded) self.volumeExpanded=NO;
     [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
     [self animate];
+    if (opening) {
+        // Cached on attachment; refresh after the opening tap has completed.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self refreshApps];
+            [self layoutEdge:NO];
+        });
+    }
 }
-- (void)toggleVolume:(id)sender { self.volumeExpanded=!self.volumeExpanded; [self animate]; }
+- (void)toggleVolume:(id)sender {
+    if (!self.volumeExpanded) [self refreshGuestGain];
+    self.volumeExpanded=!self.volumeExpanded;
+    [self animate];
+}
 - (void)resync:(id)sender {
     if ([NSUserDefaults.lcGuestAppId.lowercaseString isEqualToString:@"com.google.ios.youtubemusic"] && MBMHEnabled()) {
         MBMHForceResync();
@@ -282,60 +349,42 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
         }];
     }
 }
-- (void)drag:(UILongPressGestureRecognizer *)pan {
-    if (pan.state==UIGestureRecognizerStateChanged) {
-        CGFloat h=self.view.bounds.size.height;
-        if (h>0) self.anchor=MAX(.2,MIN(.8,[pan locationInView:self.view].y/h));
-        [self layoutEdge:NO];
-    }
-}
 @end
 
-// The rail itself closes when tapped, but all unrelated touches pass through.
-@interface MBEdgeWindow : UIWindow
-@end
-@implementation MBEdgeWindow
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    if (self.hidden || self.alpha < .01 || !self.userInteractionEnabled) return nil;
-    MBEdgeController *c=(MBEdgeController *)self.rootViewController;
-    if (!c.isViewLoaded) return nil;
-    CGPoint local=[c.view convertPoint:point fromView:self];
-    // Check controls directly so the transparent overlay never steals a
-    // button tap or lets the guest underneath receive it instead.
-    if (!c.expanded) {
-        CGPoint p=[c.tab convertPoint:local fromView:c.view];
-        return [c.tab pointInside:p withEvent:event] ? c.tab : nil;
-    }
-    NSArray *targets = [@[c.volumeCapsule,c.sync] arrayByAddingObjectsFromArray:c.shortcuts];
-    for (UIView *target in targets) {
-        if (target.hidden || !target.userInteractionEnabled) continue;
-        CGPoint p=[target convertPoint:local fromView:c.view];
-        UIView *hit=[target hitTest:p withEvent:event];
-        if (hit) return hit;
-    }
-    if (c.rail.path && CGPathContainsPoint(c.rail.path,NULL,local,false)) return c.railClose;
-    return nil;
-}
-@end
-
-static MBEdgeWindow *gMBEdgeWindow;
-static void MBEnsureGuestEdge(void) {
-    if (!MBEdgeEnabled()) { gMBEdgeWindow.hidden=YES; return; }
+static MBEdgeController *gMBEdgeController;
+static UIWindow *MBEdgeGuestWindow(void) {
     UIWindowScene *scene=MBActiveVolumeScene();
-    if (!scene) return;
-    if (!gMBEdgeWindow) {
-        MBEdgeController *controller=[MBEdgeController new];
-        gMBEdgeWindow=[[MBEdgeWindow alloc] initWithWindowScene:scene];
-        gMBEdgeWindow.rootViewController=controller;
-        gMBEdgeWindow.windowLevel=UIWindowLevelNormal+101;
-        gMBEdgeWindow.backgroundColor=UIColor.clearColor;
-        gMBEdgeWindow.frame=scene.coordinateSpace.bounds;
-        gMBEdgeWindow.hidden=NO; // never become the guest's key window
-    } else {
-        if (gMBEdgeWindow.windowScene!=scene) gMBEdgeWindow.windowScene=scene;
-        gMBEdgeWindow.hidden=NO;
-        if (!CGRectEqualToRect(gMBEdgeWindow.frame,scene.coordinateSpace.bounds)) gMBEdgeWindow.frame=scene.coordinateSpace.bounds;
+    if (!scene) return nil;
+    UIWindow *candidate=nil;
+    for (UIWindow *window in scene.windows) {
+        if (window.hidden || window.alpha<.01 || !window.rootViewController ||
+            window.windowLevel!=UIWindowLevelNormal) continue;
+        if (window.isKeyWindow) return window;
+        if (!candidate) candidate=window;
     }
+    return candidate;
+}
+static void MBEnsureGuestEdge(void) {
+    if (!MBEdgeEnabled()) {
+        [gMBEdgeController.view removeFromSuperview];
+        return;
+    }
+    UIWindow *window=MBEdgeGuestWindow();
+    if (!window) return;
+    if (!gMBEdgeController) gMBEdgeController=[MBEdgeController new];
+    UIView *view=gMBEdgeController.view;
+    if (view.superview!=window) {
+        [view removeFromSuperview];
+        view.frame=window.bounds;
+        [window addSubview:view];
+        [gMBEdgeController refreshApps];
+        [gMBEdgeController refreshGuestGain];
+        [gMBEdgeController layoutEdge:NO];
+    } else if (!CGRectEqualToRect(view.frame,window.bounds)) {
+        view.frame=window.bounds;
+        [gMBEdgeController layoutEdge:NO];
+    }
+    // Do not repeatedly reattach or reorder the view while a touch is active.
 }
 static void MBInstallGuestEdge(void) {
     if (!MBIsMediaHost()) return;
