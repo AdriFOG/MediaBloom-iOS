@@ -9,6 +9,8 @@ from pathlib import Path
 ROOT = Path(".")
 HOOK = (Path("../media-tools/audio/BloomAudioRuntime.inc").read_text()
         + "\n"
+        + Path("../media-tools/audio/MediaBloomSpotifyAudioUnit.inc").read_text()
+        + "\n"
         + Path("../media-tools/audio/BloomAudioOverlay.inc").read_text())
 LOADER = ROOT / "TweakLoader/TweakLoader.m"
 SWIFT = ROOT / "LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift"
