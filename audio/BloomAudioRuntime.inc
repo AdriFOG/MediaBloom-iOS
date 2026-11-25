@@ -7,6 +7,7 @@
 
 #include <math.h>
 #include <objc/runtime.h>
+#include <objc/message.h>
 #include <dlfcn.h>
 
 static const char kMBAudioBaseVolumeKey = 0;
@@ -249,11 +250,7 @@ static void MBSpotifyReportAudioState(BOOL force) {
     [shared setInteger:engines forKey:@"MediaBloomSpotifyActiveEnginesV2"];
     [shared setObject:summary forKey:@"MediaBloomSpotifyAudioDiagnosticV2"];
 
-    NSString *line = [NSString stringWithFormat:@"%@ · %@",
-                      [NSDateFormatter localizedStringFromDate:[NSDate date]
-                          dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterMediumStyle],
-                      [@([details count]) description]];
-    (void)line; // Summary and per-player state are shared for a copyable report.
+    // Details include class names and observed state, never raw audio.
     NSString *report = [NSString stringWithFormat:@"%@\n%@",
                          summary, [details componentsJoinedByString:@"\n"]];
     [shared setObject:report forKey:@"MediaBloomSpotifyAudioDetailsV2"];
@@ -353,6 +350,7 @@ static void MBInstallAudioHooks(void) {
         gMBAudioGuest = [guest.lowercaseString copy];
         gMBAudioObjects = [NSHashTable weakObjectsHashTable];
         if (MBIsSpotifyGuest(gMBAudioGuest)) {
+            gMBSpotifyEngines = [NSHashTable weakObjectsHashTable];
             [NSUserDefaults.lcSharedDefaults setInteger:0
                          forKey:@"MediaBloomSpotifyAVPlayersObservedV1"];
             [NSUserDefaults.lcSharedDefaults synchronize];
@@ -370,6 +368,16 @@ static void MBInstallAudioHooks(void) {
             @"AVAudioPlayer", @selector(play), (IMP)MBAVAudioPlayerPlay);
         gMBAudioAVRendererSetVolume = MBHookInstanceMethod(
             @"AVSampleBufferAudioRenderer", @selector(setVolume:), (IMP)MBAVRendererSetVolume);
+        if (MBIsSpotifyGuest(gMBAudioGuest)) {
+            // Spotify may play music through an AVAudioEngine graph instead
+            // of AVPlayer. Hook only lifecycle, never the render callback.
+            gMBSpotifyEngineStart = MBHookInstanceMethod(
+                @"AVAudioEngine", @selector(startAndReturnError:),
+                (IMP)MBSpotifyEngineStart);
+            gMBSpotifyEngineStop = MBHookInstanceMethod(
+                @"AVAudioEngine", @selector(stop), (IMP)MBSpotifyEngineStop);
+            MBSpotifyReportAudioState(YES);
+        }
 
         // Shared defaults may be changed by MediaBloom while a guest is playing.
         // Reapply through original setters, never recursively through hooks.
@@ -379,15 +387,11 @@ static void MBInstallAudioHooks(void) {
             [NSUserDefaults.lcSharedDefaults synchronize];
             float gain = MBCurrentGain();
             if (MBIsSpotifyGuest(gMBAudioGuest)) {
-                // Update the Spotify overlay only if a tracked AVFoundation
-                // player has become available since the previous tick.
+                MBSpotifyReportAudioState(NO);
                 MBRefreshVolumeOverlayControls();
             }
             if (fabsf(gain - gMBAudioLastAppliedGain) < 0.001f) return;
-            gMBAudioLastAppliedGain = gain;
-            for (id player in gMBAudioObjects.allObjects) {
-                MBSetOriginalVolume(player, MBRequestedBaseVolume(player));
-            }
+            MBApplyLiveGain();
         }];
         // UIKit volume bubble lives in the same guest scene. Unlike the
         // launcher slider, it stays reachable while content is playing.
