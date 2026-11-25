@@ -796,3 +796,222 @@ struct MediaBloomReferenceView: View {
     }
 
 }
+
+
+// MediaBloom-only launcher selection. Original LiveContainer's WebClip profile
+// is reused, with its launch URL rewritten to the MediaBloom URL scheme.
+private struct MBMediaLibraryPicker: View {
+    let apps: [LCAppModel]
+    let defaults: [String]
+    let english: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedIDs: [String] = []
+    @State private var search = ""
+    @State private var showProfile = false
+    @State private var profileURL = URL(string: "https://apple.com")!
+    @State private var errorMessage = ""
+    @AppStorage("MediaBloomLauncherSelectionRevisionV1", store: LCUtils.appGroupUserDefault)
+    private var selectionRevision = 0
+
+    private func t(_ es: String, _ en: String) -> String { english ? en : es }
+    private var catalog: [LCAppModel] {
+        var seen = Set<String>()
+        return apps.filter {
+            !$0.appInfo.isHidden && seen.insert($0.bundleIdentifier.lowercased()).inserted
+        }.sorted {
+            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+    private var filtered: [LCAppModel] {
+        guard !search.isEmpty else { return catalog }
+        return catalog.filter {
+            $0.displayName.localizedCaseInsensitiveContains(search) ||
+            $0.bundleIdentifier.localizedCaseInsensitiveContains(search)
+        }
+    }
+    private func available(_ app: LCAppModel) -> Bool {
+        app.uiIsShared && !app.appInfo.isLocked && !app.appInfo.isHidden
+    }
+    private func load() {
+        let valid = Set(catalog.filter { available($0) }.map {
+            $0.bundleIdentifier.lowercased()
+        })
+        let saved = LCUtils.appGroupUserDefault.stringArray(forKey: "MediaBloomLauncherAppIDsV1")
+        let suggested = saved ?? defaults
+        var seen = Set<String>()
+        selectedIDs = suggested.map { $0.lowercased() }.filter {
+            valid.contains($0) && seen.insert($0).inserted
+        }
+    }
+    private func store() {
+        let defaults = LCUtils.appGroupUserDefault
+        defaults.set(selectedIDs, forKey: "MediaBloomLauncherAppIDsV1")
+        selectionRevision += 1
+        defaults.synchronize()
+    }
+    private func toggle(_ app: LCAppModel) {
+        guard available(app) else { return }
+        let id = app.bundleIdentifier.lowercased()
+        if selectedIDs.contains(id) { selectedIDs.removeAll { $0 == id } }
+        else { selectedIDs.append(id) }
+        store()
+    }
+
+    private func installWebClip(for app: LCAppModel) {
+        guard available(app),
+              let path = app.appInfo.relativeBundlePath, !path.isEmpty else {
+            errorMessage = t("La aplicación debe estar compartida y desbloqueada en BloomBox.",
+                             "The app must be shared and unlocked in BloomBox.")
+            return
+        }
+        var link = URLComponents()
+        link.scheme = "bloomboxmedia"
+        link.host = "livecontainer-launch"
+        var items = [URLQueryItem(name: "bundle-name", value: path)]
+        if let folder = app.uiSelectedContainer?.folderName, !folder.isEmpty {
+            items.append(URLQueryItem(name: "container-folder-name", value: folder))
+        }
+        link.queryItems = items
+        guard let destination = link.url else {
+            errorMessage = t("No se pudo construir el enlace.", "Could not create the link.")
+            return
+        }
+        // LiveContainer builds the real icon and iOS WebClip configuration;
+        // replace only the host-specific fields so the profile never routes
+        // through BloomBox or a generic LiveContainer installation.
+        guard var profile = app.appInfo.generateWebClipConfig(
+                withContainerId: app.uiSelectedContainer?.folderName,
+                iconStyle: .Light) as? [String: Any],
+              var payloads = profile["PayloadContent"] as? [[String: Any]],
+              !payloads.isEmpty else {
+            errorMessage = t("No se pudo crear el perfil.", "Could not create the profile.")
+            return
+        }
+        let identifier = "com.kdt.BloomBoxMedia.webclip." + app.bundleIdentifier.lowercased()
+        payloads[0]["URL"] = destination.absoluteString
+        payloads[0]["PayloadIdentifier"] = identifier + ".icon"
+        payloads[0]["PayloadUUID"] = UUID().uuidString
+        payloads[0]["PayloadOrganization"] = "MediaBloom"
+        payloads[0]["PayloadDescription"] = t(
+            "Abre \(app.displayName) exclusivamente mediante MediaBloom.",
+            "Launch \(app.displayName) through MediaBloom.")
+        profile["PayloadContent"] = payloads
+        profile["PayloadIdentifier"] = identifier
+        profile["PayloadUUID"] = UUID().uuidString
+        profile["PayloadOrganization"] = "MediaBloom"
+        profile["PayloadDescription"] = t(
+            "Acceso al inicio para \(app.displayName) mediante MediaBloom.",
+            "Home Screen shortcut for \(app.displayName) through MediaBloom.")
+        profile["ConsentText"] = ["default": t(
+            "Instala un icono que abre \(app.displayName) usando MediaBloom.",
+            "Install a Home Screen icon that opens \(app.displayName) using MediaBloom.")]
+        do {
+            let data = try PropertyListSerialization.data(
+                fromPropertyList: profile, format: .xml, options: 0)
+            guard let url = URL(string: "data:application/x-apple-aspen-config;base64,\(data.base64EncodedString())") else {
+                throw CocoaError(.fileWriteInvalidFileName)
+            }
+            profileURL = url
+            showProfile = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @ViewBuilder
+    private func icon(for app: LCAppModel) -> some View {
+        if let image = app.appInfo.iconIsDarkIcon(false) {
+            Image(uiImage: image).resizable().scaledToFill()
+                .frame(width: 40, height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        } else {
+            Image(systemName: "app.fill")
+                .frame(width: 40, height: 40)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section {
+                    Text(t("Elige las apps que aparecerán en MediaBloom. Las privadas o bloqueadas se muestran, pero no se pueden abrir desde otra app.",
+                           "Choose apps for MediaBloom. Private or locked apps are shown but cannot run from another host."))
+                        .font(.footnote).foregroundColor(.secondary)
+                    Text(t("Seleccionadas: \(selectedIDs.count)", "Selected: \(selectedIDs.count)"))
+                        .font(.subheadline.weight(.semibold))
+                }
+                Section(header: Text(t("Aplicaciones de BloomBox", "BloomBox apps"))) {
+                    ForEach(filtered, id: \.bundleIdentifier) { app in
+                        let enabled = available(app)
+                        let selected = selectedIDs.contains(app.bundleIdentifier.lowercased())
+                        HStack(spacing: 12) {
+                            Button { toggle(app) } label: {
+                                HStack(spacing: 12) {
+                                    icon(for: app)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(app.displayName)
+                                            .foregroundColor(.primary).lineLimit(1)
+                                        if !enabled {
+                                            Text(app.appInfo.isLocked
+                                                 ? t("Bloqueada", "Locked")
+                                                 : t("Privada: compártela desde BloomBox",
+                                                     "Private: share it in BloomBox"))
+                                                .font(.caption2).foregroundColor(.secondary)
+                                        }
+                                    }
+                                    Spacer(minLength: 0)
+                                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(selected ? .accentColor : .secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!enabled)
+                            if enabled {
+                                Button { installWebClip(for: app) } label: {
+                                    Image(systemName: "square.and.arrow.up.on.square")
+                                        .font(.system(size: 19))
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel(t("Crear acceso a \(app.displayName)",
+                                                      "Create shortcut to \(app.displayName)"))
+                            }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                    if filtered.isEmpty {
+                        Text(t("No encontramos aplicaciones.", "No apps found."))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Section {
+                    Text(t("Para colocar un icono en el inicio, toca el botón de acceso directo e instala el perfil desde Ajustes de iOS. El enlace abre MediaBloom, no BloomBox.",
+                           "Tap the shortcut icon and install the profile in iOS Settings. The shortcut targets MediaBloom, not BloomBox."))
+                        .font(.footnote).foregroundColor(.secondary)
+                }
+            }
+            .searchable(text: $search, prompt: t("Buscar apps", "Search apps"))
+            .navigationTitle(t("Apps de BloomBox", "BloomBox apps"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(t("Listo", "Done")) { dismiss() }
+                }
+            }
+            .onAppear(perform: load)
+            .fullScreenCover(isPresented: $showProfile) {
+                SafariView(url: $profileURL)
+            }
+            .alert(t("No se pudo crear el acceso", "Could not create shortcut"),
+                   isPresented: Binding(
+                    get: { !errorMessage.isEmpty },
+                    set: { if !$0 { errorMessage = "" } })) {
+                Button("OK", role: .cancel) { errorMessage = "" }
+            } message: {
+                Text(errorMessage)
+            }
+        }
+        .navigationViewStyle(.stack)
+        .preferredColorScheme(.light)
+    }
+}
