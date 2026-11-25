@@ -43,16 +43,18 @@ def main():
     guest_probe = Path("../media-tools/haptics/MediaBloomGuestNowPlayingProbe.inc").read_text(encoding="utf-8")
     guest_official = Path("../media-tools/haptics/MediaBloomGuestOfficialHaptics.inc").read_text(encoding="utf-8")
     guest_deezer = Path("../media-tools/haptics/MediaBloomGuestDeezerFallback.inc").read_text(encoding="utf-8")
+    guest_overlay = Path("../media-tools/haptics/MediaBloomGuestHapticsOverlay.inc").read_text(encoding="utf-8")
+    guest_edge = Path("../media-tools/controls/MediaBloomGuestEdge.inc").read_text(encoding="utf-8")
     loader = replace_once(
         loader,
         " __attribute__((constructor))\nstatic void TweakLoaderConstructor()",
-        "\n" + guest_probe + "\n" + guest_official + "\n" + guest_deezer + "\n __attribute__((constructor))\nstatic void TweakLoaderConstructor()",
+        "\n" + guest_probe + "\n" + guest_official + "\n" + guest_deezer + "\n" + guest_overlay + "\n" + guest_edge + "\n __attribute__((constructor))\nstatic void TweakLoaderConstructor()",
         "guest probe TweakLoader constructor",
     )
     loader = replace_once(
         loader,
         "    MBInstallAudioHooks();\n",
-        "    MBInstallAudioHooks();\n    MBInstallGuestHapticsProbe();\n",
+        "    MBInstallAudioHooks();\n    MBInstallGuestHapticsProbe();\n    MBInstallGuestEdge();\n",
         "opt-in guest probe entry",
     )
     loader_path.write_text(loader, encoding="utf-8")

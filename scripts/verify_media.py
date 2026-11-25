@@ -31,6 +31,14 @@ def check(ipa: Path) -> None:
         assert app_id == MEDIA_ID, f"Unsafe host identifier: {app_id!r}"
         assert app_id not in DISALLOWED_IDS
         assert info.get("CFBundleDisplayName") == "BloomBox Media"
+        assert info.get("CFBundleShortVersionString") == "2.4.0", (
+            "MediaBloom release must report v2.4.0, not the inherited BloomBox version",
+            info.get("CFBundleShortVersionString"),
+        )
+        assert int(info.get("CFBundleVersion", 0)) >= 34000, (
+            "Build number must be newer than existing MediaBloom installs",
+            info.get("CFBundleVersion"),
+        )
         assert info.get("BloomBoxMediaEdition") is True
         primary = info.get("CFBundleIcons", {}).get("CFBundlePrimaryIcon", {})
         assert primary.get("CFBundleIconName") == "AppIcon", "Native MediaBloom primary icon is absent"

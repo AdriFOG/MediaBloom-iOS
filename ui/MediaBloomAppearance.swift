@@ -164,6 +164,16 @@ private struct MBPhotosSelection: UIViewControllerRepresentable {
 struct MediaBloomAppearanceSheet: View {
     let onOpenAdvanced: () -> Void
     let onManageMediaLabels: () -> Void
+    let onManageAppLibrary: () -> Void
+
+    init(onOpenAdvanced: @escaping () -> Void,
+         onManageMediaLabels: @escaping () -> Void,
+         onManageAppLibrary: @escaping () -> Void = {}) {
+        self.onOpenAdvanced = onOpenAdvanced
+        self.onManageMediaLabels = onManageMediaLabels
+        self.onManageAppLibrary = onManageAppLibrary
+    }
+
     @Environment(\.dismiss) private var dismiss
     @AppStorage("BloomBoxPreferredLanguage", store: LCUtils.appGroupUserDefault)
     private var language = "system"
@@ -177,6 +187,13 @@ struct MediaBloomAppearanceSheet: View {
     @AppStorage("MediaBloomGlassTintHexV1") private var glassTint = "F5F4F1"
     @AppStorage("MediaBloomAudioProbeEnabledV1", store: LCUtils.appGroupUserDefault)
     private var audioEnabled = false
+    @AppStorage("MediaBloomEdgeEnabledV1", store: LCUtils.appGroupUserDefault)
+    private var edgeEnabled = true
+    @AppStorage("MediaBloomEdgeOpacityV1", store: LCUtils.appGroupUserDefault)
+    private var edgeOpacity = 1.0
+    @AppStorage("MediaBloomEdgeRightV1", store: LCUtils.appGroupUserDefault)
+    private var edgeRight = true
+    @State private var showEdgeAppPicker = false
     @State private var showPhotos = false
     @State private var showFiles = false
     @State private var hasWallpaper = false
@@ -184,6 +201,8 @@ struct MediaBloomAppearanceSheet: View {
     @StateObject private var haptics = MBHapticsDiagnostic.shared
     @AppStorage("MediaBloomHapticsAutoISRCV1", store: LCUtils.appGroupUserDefault)
     private var automaticMusicHaptics = false
+    @AppStorage("MediaBloomHapticsGuestOverlayV1", store: LCUtils.appGroupUserDefault)
+    private var showHapticsInPlayer = true
 
     private var english: Bool {
         language == "en" || (language == "system" &&
@@ -199,6 +218,7 @@ struct MediaBloomAppearanceSheet: View {
                 glassSection
                 mediaTagsSection
                 audioSection
+                edgeSection
                 hapticsSection
                 advancedSection
             }
@@ -215,6 +235,9 @@ struct MediaBloomAppearanceSheet: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 haptics.refresh(english: english)
+            }
+            .sheet(isPresented: $showEdgeAppPicker) {
+                MBEdgeAppPicker(english: english)
             }
             .sheet(isPresented: $showPhotos) {
                 MBPhotosSelection { image in saveWallpaper(image) }
@@ -326,6 +349,30 @@ struct MediaBloomAppearanceSheet: View {
         }
     }
 
+    private var edgeSection: some View {
+        Section(header: Text("MediaBloom Edge")) {
+            Toggle(t("Menú lateral", "Edge menu"), isOn: $edgeEnabled)
+            Toggle(t("Borde derecho", "Right edge"), isOn: $edgeRight)
+            Button { showEdgeAppPicker = true } label: {
+                Label(t("Elegir apps de la muesca", "Choose Edge apps"),
+                      systemImage: "square.grid.2x2")
+            }
+            Text(t("Elige hasta 4 aplicaciones. Puedes cambiar el orden desde la lista.",
+                   "Choose up to 4 apps. You can reorder them from the list."))
+                .font(.footnote).foregroundColor(.secondary)
+            HStack {
+                Text(t("Opacidad", "Opacity"))
+                Spacer()
+                Text("\(Int((edgeOpacity * 100).rounded()))%").monospacedDigit()
+            }
+            Slider(value: $edgeOpacity, in: 0...1, step: 0.01)
+            Button(t("Restaurar negro puro", "Restore pure black")) { edgeOpacity = 1 }
+            Text(t("0%: transparente. 100%: negro puro. Los botones siguen visibles. Vuelve a abrir el reproductor para aplicar los ajustes.",
+                   "0%: transparent. 100%: pure black. Buttons remain visible. Reopen the player to apply settings."))
+                .font(.footnote).foregroundColor(.secondary)
+        }
+    }
+
     private var audioSection: some View {
         Section(header: Text("BloomAudio")) {
             Toggle(t("Activar control de audio", "Enable audio control"), isOn: $audioEnabled)
@@ -384,11 +431,58 @@ struct MediaBloomAppearanceSheet: View {
                         "Try automatic Apple Music Haptics"), systemImage: "waveform")
             }
             .disabled(!haptics.hardwareAvailable)
+            Toggle(isOn: $showHapticsInPlayer) {
+                Label(t("Mostrar estado en el reproductor",
+                        "Show haptic status inside player"), systemImage: "waveform.path")
+            }
+            .disabled(!haptics.hardwareAvailable)
+            Text(t("En YouTube Music aparecerá una barra pequeña con el estado de carga y un botón ↻ para resincronizar sin detener la canción. Apple no muestra un porcentaje de descarga háptica.",
+                   "YouTube Music shows a compact loading indicator and ↻ button to retry synchronization without stopping the song. Apple does not expose haptic download progress."))
+                .font(.caption)
+                .foregroundColor(.secondary)
             Text(t("Experimental: busca la grabación exacta con MusicBrainz y solo añade su ISRC cuando Apple confirma una pista háptica. Activa también el registro y vuelve a abrir YouTube Music.",
                    "Experimental: looks up the exact recording in MusicBrainz and adds its ISRC only when Apple reports a haptic track. Also start capture and reopen YouTube Music."))
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if !haptics.guestHapticsState.isEmpty {
+                Label(t("Último resultado de Music Haptics",
+                        "Last Music Haptics result"),
+                      systemImage: haptics.guestHapticsSymbol)
+                    .font(.subheadline.weight(.semibold))
+                Text(haptics.guestHapticsLabel(english: english))
+                    .font(.headline)
+                if !haptics.guestHapticsSong.isEmpty {
+                    Text(haptics.guestHapticsSong)
+                        .font(.footnote)
+                }
+                if !haptics.guestHapticsDetail.isEmpty {
+                    Text(haptics.guestHapticsDetail)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !haptics.guestHapticsDate.isEmpty {
+                    Text(t("Registrado durante la reproducción: ",
+                           "Recorded during playback: ") + haptics.guestHapticsDate)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            if haptics.guestRejectedCount > 0 {
+                Text(t("Códigos descartados temporalmente: ",
+                       "Temporarily rejected codes: ")
+                     + "\(haptics.guestRejectedCount)")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                Button {
+                    haptics.retryRejectedISRCs()
+                } label: {
+                    Label(t("Reintentar códigos descartados",
+                            "Retry previously rejected codes"),
+                          systemImage: "arrow.clockwise")
+                }
+            }
             if haptics.guestSamples > 0 || !haptics.guestEvents.isEmpty {
                 Label(t("Diagnóstico desde YouTube Music", "YouTube Music guest diagnostic"),
                       systemImage: "waveform.path.ecg")
@@ -439,8 +533,8 @@ struct MediaBloomAppearanceSheet: View {
                     Label(t("Borrar registro", "Clear log"), systemImage: "trash")
                 }
             }
-            Text(t("El tweak revisa los datos de YouTube Music cada 2 segundos. No graba audio ni usa el micrófono. El modo automático consulta MusicBrainz por internet; solo iOS puede confirmar vibraciones sincronizadas.",
-                   "The guest tweak checks YouTube Music every 2 seconds. No audio recording or microphone. Auto mode queries MusicBrainz online; only iOS can confirm synchronized haptics."))
+            Text(t("Music Haptics revisa la canción cada medio segundo. Los códigos rechazados se recuerdan durante 12 horas; después se pueden comprobar de nuevo. Busca en MusicBrainz y Deezer sin grabar audio ni usar el micrófono.",
+                   "Music Haptics checks song metadata every half-second. Rejected codes are remembered for 12 hours, then retried. It uses MusicBrainz and Deezer without recording audio or using the microphone."))
                 .font(.caption2)
                 .foregroundColor(.secondary)
             Button {
@@ -470,6 +564,13 @@ struct MediaBloomAppearanceSheet: View {
 
     private var mediaTagsSection: some View {
         Section(header: Text(t("Etiquetas compartidas", "Shared media labels"))) {
+            Button(action: onManageAppLibrary) {
+                Label(t("Elegir apps desde BloomBox", "Choose apps from BloomBox"),
+                      systemImage: "square.grid.2x2")
+            }
+            Text(t("Selecciona apps compartidas para MediaBloom y crea accesos al inicio del iPhone.",
+                   "Choose shared apps for MediaBloom and create iPhone Home Screen icons."))
+                .font(.footnote).foregroundColor(.secondary)
             Button(action: onManageMediaLabels) {
                 Label(t("Organizar etiquetas de apps", "Manage app labels"),
                       systemImage: "tag")
@@ -654,6 +755,175 @@ struct MBMediaTagEditor: View {
                     Button(t("Listo", "Done")) { dismiss() }
                 }
             }
+        }
+        .navigationViewStyle(.stack)
+        .preferredColorScheme(.light)
+    }
+}
+
+
+// Settings-only picker: reads shared media guests without modifying containers.
+private struct MBEdgePickerApp: Identifiable {
+    let id: String
+    let name: String
+    let icon: UIImage?
+}
+
+private struct MBEdgeAppPicker: View {
+    let english: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var apps: [MBEdgePickerApp] = []
+    @State private var selected: [String] = []
+    private static let selectionKey = "MediaBloomEdgeAppIDsV1"
+    // The same known multimedia IDs used by the in-player Edge menu.
+    private static let preferred: [String] = [
+        "com.google.ios.youtubemusic", "com.spotify.client",
+        "org.videolan.vlc-ios", "com.apple.music", "com.google.ios.youtube",
+        "com.amazon.mp3", "com.soundcloud.touchapp", "com.deezer.deezer",
+        "com.tidal", "com.netflix.netflix", "com.amazon.aiv",
+        "com.twitch.twitch", "tv.twitch", "com.plexapp.plex",
+        "com.firecore.infuse", "com.disney.disneyplus"
+    ]
+    private func t(_ es: String, _ en: String) -> String { english ? en : es }
+
+    private static func plist(_ url: URL) -> [String: Any] {
+        guard let data = try? Data(contentsOf: url),
+              let dictionary = (try? PropertyListSerialization.propertyList(
+                  from: data, options: [], format: nil)) as? [String: Any]
+        else { return [:] }
+        return dictionary
+    }
+
+    private static func installedMedia() -> [MBEdgePickerApp] {
+        guard let group = LCSharedUtils.appGroupPath() else { return [] }
+        let folder = group.appendingPathComponent("LiveContainer/Applications",
+                                                  isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]) else { return [] }
+        let defaults = LCUtils.appGroupUserDefault
+        let known = Set(preferred)
+        var result: [MBEdgePickerApp] = []
+        var seen = Set<String>()
+        for file in files where file.pathExtension.lowercased() == "app" {
+            let metadata = plist(file.appendingPathComponent("LCAppInfo.plist"))
+            if ["isHidden", "isLocked", "LCHidden", "LCLocked"].contains(where: {
+                (metadata[$0] as? NSNumber)?.boolValue == true
+            }) { continue }
+            let info = plist(file.appendingPathComponent("Info.plist"))
+            guard let id = (info["LCBundleIdentifier"] as? String ??
+                            info["CFBundleIdentifier"] as? String)?.lowercased(),
+                  !id.isEmpty, seen.insert(id).inserted else { continue }
+            let tag = defaults.string(forKey: "BloomBoxMediaTagV1." + id)
+            if tag == "none" || (tag != "music" && tag != "video" && !known.contains(id)) {
+                continue
+            }
+            let name = (info["CFBundleDisplayName"] as? String ??
+                        info["CFBundleName"] as? String) ?? file.deletingPathExtension().lastPathComponent
+            let icon = UIImage(contentsOfFile: file.appendingPathComponent("LCAppIconLight.png").path)
+                ?? UIImage(contentsOfFile: file.appendingPathComponent("LCAppIconDark.png").path)
+            result.append(MBEdgePickerApp(id: id, name: name, icon: icon))
+        }
+        return result.sorted { a, b in
+            let ai = preferred.firstIndex(of: a.id) ?? preferred.count
+            let bi = preferred.firstIndex(of: b.id) ?? preferred.count
+            return ai == bi ? a.name.localizedStandardCompare(b.name) == .orderedAscending : ai < bi
+        }
+    }
+
+    private func reload() {
+        apps = Self.installedMedia()
+        let valid = Set(apps.map(\.id))
+        let configured = LCUtils.appGroupUserDefault.array(forKey: Self.selectionKey) as? [String]
+        let defaults = configured ?? Array(apps.prefix(4).map(\.id))
+        var seen = Set<String>()
+        selected = Array(defaults.filter { valid.contains($0) && seen.insert($0).inserted }.prefix(4))
+    }
+
+    private func save() {
+        LCUtils.appGroupUserDefault.set(selected, forKey: Self.selectionKey)
+        LCUtils.appGroupUserDefault.synchronize()
+    }
+
+    @ViewBuilder
+    private func appIcon(_ app: MBEdgePickerApp) -> some View {
+        if let icon = app.icon {
+            Image(uiImage: icon).resizable().scaledToFit()
+                .frame(width: 34, height: 34)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            Image(systemName: "music.note")
+                .foregroundColor(.secondary)
+                .frame(width: 34, height: 34)
+        }
+    }
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section(header: Text(t("En la muesca (\(selected.count)/4)",
+                                       "On Edge (\(selected.count)/4)"))) {
+                    if selected.isEmpty {
+                        Text(t("No hay accesos seleccionados", "No selected shortcuts"))
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(selected, id: \.self) { id in
+                        if let app = apps.first(where: { $0.id == id }) {
+                            HStack(spacing: 12) {
+                                appIcon(app)
+                                Text(app.name)
+                                Spacer()
+                                Button {
+                                    selected.removeAll(where: { $0 == id })
+                                    save()
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundColor(.red)
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel(t("Quitar \(app.name)", "Remove \(app.name)"))
+                            }
+                        }
+                    }
+                    .onMove { source, destination in
+                        selected.move(fromOffsets: source, toOffset: destination)
+                        save()
+                    }
+                }
+                Section(header: Text(t("Agregar aplicaciones", "Add apps"))) {
+                    ForEach(apps.filter { !selected.contains($0.id) }) { app in
+                        Button {
+                            guard selected.count < 4 else { return }
+                            selected.append(app.id)
+                            save()
+                        } label: {
+                            HStack(spacing: 12) {
+                                appIcon(app)
+                                Text(app.name)
+                                Spacer()
+                                Image(systemName: "plus.circle")
+                            }
+                        }
+                        .disabled(selected.count >= 4)
+                    }
+                    if apps.isEmpty {
+                        Text(t("No hay apps multimedia compartidas. Revisa las etiquetas de las apps.",
+                               "No shared media apps found. Check the app labels."))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .navigationTitle(t("Apps de la muesca", "Edge apps"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    EditButton().disabled(selected.count < 2)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(t("Listo", "Done")) { dismiss() }
+                }
+            }
+            .onAppear(perform: reload)
         }
         .navigationViewStyle(.stack)
         .preferredColorScheme(.light)

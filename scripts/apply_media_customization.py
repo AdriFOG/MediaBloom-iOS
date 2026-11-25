@@ -33,7 +33,7 @@ def apply():
     text = HOST.read_text(encoding='utf-8')
     if MARK in text or 'struct MBReferenceTheme' in text:
         raise RuntimeError('MediaBloom customization already applied')
-    if 'MediaBloomReferenceView(model: model)' not in text:
+    if 'MediaBloomReferenceView(model: model, allSharedGuests: apps)' not in text:
         raise RuntimeError('Reference music layouts must be installed first')
 
     ids = '\n'.join('        "' + value + '",' for value in MEDIA_IDS)

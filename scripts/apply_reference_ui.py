@@ -12,7 +12,7 @@ LAUNCHER = ROOT / 'LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swif
 SOURCE = Path('../media-tools/ui/MediaBloomReferenceView.swift')
 MARK = '// MARK: - MediaBloom reference-accurate vertical and horizontal layouts'
 BEFORE = '        MediaBloomHomeView(model: model)'
-AFTER = '        MediaBloomReferenceView(model: model)'
+AFTER = '        MediaBloomReferenceView(model: model, allSharedGuests: apps)'
 
 
 def main():

@@ -4,7 +4,7 @@ from pathlib import Path
 
 source = Path('LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift').read_text()
 assert source.count('struct MediaBloomReferenceView: View') == 1
-assert source.count('MediaBloomReferenceView(model: model)') == 1
+assert source.count('MediaBloomReferenceView(model: model, allSharedGuests: apps)') == 1
 assert 'if geometry.size.width > geometry.size.height' in source
 assert 'private func portraitLayout' in source
 assert 'private func landscapeLayout' in source
@@ -31,4 +31,21 @@ ui = source.split('// MARK: - MediaBloom reference-accurate vertical and horizon
 for forbidden in ('MPVolumeView', 'AVAudioSession', 'URLSession', 'GameBox',
                   '.scrollIndicators(.hidden)'):
     assert forbidden not in ui, forbidden
+# The launcher must allow explicit, user-selected shared guests without
+# modifying the original BloomBox app and must never create a BloomBox link.
+assert "MBMediaLibraryPicker(apps: allSharedGuests" in source
+assert "MediaBloomLauncherAppIDsV1" in source
+assert "MediaBloomLauncherSelectionRevisionV1" in source
+assert 'url.scheme = "bloomboxmedia"' in source
+assert 'link.scheme = "bloomboxmedia"' in source
+assert 'url.host = "livecontainer-launch"' in source
+assert 'link.host = "livecontainer-launch"' in source
+assert "generateWebClipConfig(" in source
+assert 'payloads[0]["URL"] = destination.absoluteString' in source
+assert 'profile["PayloadOrganization"] = "MediaBloom"' in source
+assert 'if let image = guest.appInfo.iconIsDarkIcon(false)' in source
+assert "app.uiIsShared" in source
+assert 'showLibraryPicker = true' in source
+assert 'private func landscapeAppPanel()' in source
+assert 'private func appGridPanel()' in source
 print('PASS: two faithful layouts, real audio bindings, real app icons, original engine untouched')

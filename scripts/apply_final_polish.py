@@ -27,10 +27,10 @@ def main() -> None:
                    "MBAlbumArtworkCache"):
         if needed not in text:
             raise RuntimeError(f"Missing prerequisite: {needed}")
-    text = replace_one(
-        text, "        MediaBloomReferenceView(model: model)",
-        "        MediaBloomReferenceView(model: model, allSharedGuests: apps)",
-        "Pass complete shared guest catalog for manual music/video labels")
+    # The full app list is now wired by apply_reference_ui.py so custom
+    # launcher selection is available before final-tag refresh is installed.
+    if text.count("        MediaBloomReferenceView(model: model, allSharedGuests: apps)") != 1:
+        raise RuntimeError("Missing complete BloomBox catalog integration")
     text = replace_one(
         text,
         """            .onAppear { wire(); sync() }

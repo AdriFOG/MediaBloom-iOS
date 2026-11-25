@@ -240,6 +240,12 @@ static void MBEnsureVolumeOverlay(void) {
     if (![NSThread isMainThread]) return;
     UIWindowScene *scene = MBActiveVolumeScene();
     if (!scene) return;
+    id edgeChoice = [NSUserDefaults.lcSharedDefaults objectForKey:@"MediaBloomEdgeEnabledV1"];
+    if (edgeChoice == nil || [edgeChoice boolValue]) {
+        gMBVolumeWindow.hidden = YES;
+        return;
+    }
+    if (gMBVolumeWindow) gMBVolumeWindow.hidden = NO;
 
     if (!gMBVolumeWindow) {
         gMBVolumeController = [MBVolumeOverlayController new];

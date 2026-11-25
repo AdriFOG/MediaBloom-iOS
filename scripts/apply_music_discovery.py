@@ -23,7 +23,7 @@ def main():
     host = HOST.read_text(encoding='utf-8')
     if MARKER in host:
         raise RuntimeError('Music discovery already injected')
-    for contract in ['MediaBloomReferenceView(model: model)', 'struct MBReferenceTheme',
+    for contract in ['MediaBloomReferenceView(model: model, allSharedGuests: apps)', 'struct MBReferenceTheme',
                      'MediaBloomMasterIndependentV2',
                      'struct BloomBoxMediaHome: View',
                      'struct BloomBoxMediaHomeClassic: View']:
