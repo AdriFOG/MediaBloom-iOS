@@ -29,7 +29,11 @@ assert "MediaBloomAudioOverlayYV1" in tweak
 assert "MediaBloomAudioOverlayYV1" not in ui
 assert b"BloomBoxMediaEdition" in host
 assert "MPVolumeView" not in tweak
-assert "outputVolume" not in tweak
+# AVAudioMixerNode.outputVolume is per-engine, NOT iOS device outputVolume.
+# Reject system-volume mutation, but allow the isolated Spotify mixer.
+assert 'AVAudioSession.sharedInstance().outputVolume' not in tweak
+assert 'AVAudioSession.sharedInstance().setOutputVolume' not in tweak
+assert 'MPVolumeView' not in tweak
 
 # Spotify support is strictly opt-in and must never pretend that a
 # proprietary audio pipeline is a controllable AVFoundation player.
