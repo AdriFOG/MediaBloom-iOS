@@ -14,7 +14,7 @@ assert 'MediaBloomAccentHexV1' in host
 assert 'MediaBloomCardHexV1' in host
 assert 'MediaBloomMixCardHexV1' in host
 assert 'MBPhotosSelection' in host and 'allowedContentTypes: [.image]' in host
-assert 'MediaBloomReferenceView(model: model)' in host
+assert 'MediaBloomReferenceView(model: model, allSharedGuests: apps)' in host
 assert 'private func portraitLayout' in host and 'private func landscapeLayout' in host
 assert 'private func individualVolumeEditor' in host
 assert 'private func appVolumeContextMenu' in host
