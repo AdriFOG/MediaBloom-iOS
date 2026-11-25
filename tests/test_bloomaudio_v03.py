@@ -47,7 +47,8 @@ assert 'Spotify · sin ruta AV' in tweak
 edge_source = Path("../media-tools/controls/MediaBloomGuestEdge.inc").read_text()
 assert 'Spotify: sin ruta AV' in edge_source
 assert 'MBRefreshVolumeOverlayControls();' in tweak
-assert 'setOutputVolume:' not in tweak
+# Only an AVAudioEngine mainMixerNode setter is allowed in Spotify's guest.
+assert 'MBSpotifySetMixerGain' in tweak
 # Spotify v2 tests AVAudioEngine *only within its own guest process*.
 assert 'AVAudioEngine' in tweak
 assert 'startAndReturnError:' in tweak
