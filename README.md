@@ -11,6 +11,43 @@
   <a href="https://github.com/AdriFOG/MediaBloom-iOS/releases/tag/v2.4.0">Release notes</a>
 </p>
 
+## Capturas reales / Screenshots 📱
+
+<p align="center"><em>Así se ve MediaBloom en un iPhone · MediaBloom running on a real iPhone</em></p>
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href="assets/screenshots/home.webp"><img src="assets/screenshots/home.webp" width="240" alt="MediaBloom Home: mix de favoritos, artistas seleccionados y aplicaciones multimedia / favorites mix, artists and media apps"></a>
+      <br><strong>Inicio / Home</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="assets/screenshots/edge-apps.webp"><img src="assets/screenshots/edge-apps.webp" width="240" alt="MediaBloom Edge con accesos rápidos flotando sobre YouTube Music / floating shortcuts"></a>
+      <br><strong>Edge: accesos / Shortcuts</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="assets/screenshots/edge-music.webp"><img src="assets/screenshots/edge-music.webp" width="240" alt="MediaBloom Edge abierto sobre el reproductor de música / Edge over a music player"></a>
+      <br><strong>Edge: controles / Controls</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="assets/screenshots/edge-collapsed.webp"><img src="assets/screenshots/edge-collapsed.webp" width="240" alt="MediaBloom Edge contraído para dejar libre el reproductor / collapsed Edge"></a>
+      <br><strong>Edge compacto / Collapsed</strong>
+    </td>
+    <td align="center">
+      <a href="assets/screenshots/music-playback.webp"><img src="assets/screenshots/music-playback.webp" width="240" alt="Reproducción de música en YouTube Music abierto con MediaBloom / music playback"></a>
+      <br><strong>Reproducción / Playback</strong>
+    </td>
+    <td align="center">
+      <a href="assets/screenshots/lock-screen.webp"><img src="assets/screenshots/lock-screen.webp" width="240" alt="Controles multimedia en la pantalla bloqueada de iOS / iOS Lock Screen media controls"></a>
+      <br><strong>Pantalla bloqueada / Lock Screen</strong>
+    </td>
+  </tr>
+</table>
+
+<p align="center"><sub>Toca una imagen para verla completa · Tap a screenshot to open it. Fotos reales del proyecto, optimizadas para carga rápida / Real screenshots, optimized for fast loading.</sub></p>
+
 ## MediaBloom 2.4 — What's New / Novedades
 
 **Español:** MediaBloom Edge estrena una muesca flotante con animación gelatinosa, menú de volumen individual y hasta **4 aplicaciones personalizables**. Music Haptics incluye mejoras de búsqueda y sincronización, con un indicador de progreso que desaparece al terminar y puede ocultarse deslizando. El launcher ahora permite elegir aplicaciones compartidas de BloomBox, y crear accesos directos al inicio del iPhone mediante **perfiles WebClip**, usando el enlace exclusivo `bloomboxmedia://`.
