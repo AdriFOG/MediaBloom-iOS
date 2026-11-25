@@ -143,6 +143,17 @@ static void MBMHUpdateGuestOverlay(void) {
         [retry addTarget:gMBMHOverlayTarget action:@selector(mbmhRetry:)
             forControlEvents:UIControlEventTouchUpInside];
         [root addSubview:retry];
+        // Dismiss in any natural horizontal direction or upward.
+        for (NSNumber *direction in @[@(UISwipeGestureRecognizerDirectionLeft),
+                                      @(UISwipeGestureRecognizerDirectionRight),
+                                      @(UISwipeGestureRecognizerDirectionUp)]) {
+            UISwipeGestureRecognizer *swipe =
+                [[UISwipeGestureRecognizer alloc] initWithTarget:gMBMHOverlayTarget
+                                                          action:@selector(mbmhDismiss:)];
+            swipe.direction = direction.unsignedIntegerValue;
+            swipe.cancelsTouchesInView = NO;
+            [root addGestureRecognizer:swipe];
+        }
 
         gMBMHOverlayView = root;
         gMBMHOverlayTitle = title;
