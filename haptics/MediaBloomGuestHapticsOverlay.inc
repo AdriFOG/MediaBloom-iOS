@@ -25,8 +25,6 @@ static MBMHOverlayRetryTarget *gMBMHOverlayTarget = nil;
 static BOOL MBMHOverlayAllowed(void) {
     if (!MBMHEnabled()) return NO;
     NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
-    id edgeChoice = [shared objectForKey:@"MediaBloomEdgeEnabledV1"];
-    if (edgeChoice == nil || [edgeChoice boolValue]) return NO;
     id choice = [shared objectForKey:kMBMHGuestOverlayKey];
     return choice == nil || [choice boolValue];
 }
