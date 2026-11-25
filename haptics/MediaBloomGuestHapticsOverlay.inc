@@ -9,14 +9,35 @@ static UILabel *gMBMHOverlayTitle = nil;
 static UILabel *gMBMHOverlaySong = nil;
 static UIActivityIndicatorView *gMBMHOverlaySpinner = nil;
 static NSString *gMBMHOverlayLastState = nil;
+static NSString *gMBMHOverlayDismissedSong = nil;
+
+static void MBMHHideGuestOverlay(BOOL animated) {
+    UIView *view = gMBMHOverlayView;
+    gMBMHOverlayView = nil; gMBMHOverlayTitle = nil;
+    gMBMHOverlaySong = nil; gMBMHOverlaySpinner = nil;
+    gMBMHOverlayLastState = nil;
+    if (!view) return;
+    if (!animated || UIAccessibilityIsReduceMotionEnabled()) {
+        [view removeFromSuperview];
+        return;
+    }
+    [UIView animateWithDuration:.18 animations:^{
+        view.alpha = 0;
+        view.transform = CGAffineTransformMakeTranslation(0, -14);
+    } completion:^(BOOL finished) { [view removeFromSuperview]; }];
+}
 
 @interface MBMHOverlayRetryTarget : NSObject
 - (void)mbmhRetry:(id)sender;
+- (void)mbmhDismiss:(UISwipeGestureRecognizer *)gesture;
 @end
 
 @implementation MBMHOverlayRetryTarget
-- (void)mbmhRetry:(id)sender {
-    MBMHForceResync();
+- (void)mbmhRetry:(id)sender { MBMHForceResync(); }
+- (void)mbmhDismiss:(UISwipeGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateRecognized) return;
+    gMBMHOverlayDismissedSong = [gMBMHSongSignature copy];
+    MBMHHideGuestOverlay(YES);
 }
 @end
 
