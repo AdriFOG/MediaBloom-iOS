@@ -70,30 +70,8 @@ static UIImage *MBEdgeAppIcon(NSString *path, BOOL dark) {
     }
     return nil;
 }
-@interface MBEdgeButton : UIButton
-@property(nonatomic,assign) CGFloat touchPadding;
-@property(nonatomic,strong) CAShapeLayer *railShape;
-@property(nonatomic,assign) BOOL railExpanded;
-@end
-@implementation MBEdgeButton
-- (BOOL)pointInside:(CGPoint)p withEvent:(UIEvent *)event {
-    if (!self.railShape) {
-        return CGRectContainsPoint(CGRectInset(self.bounds,-self.touchPadding,-self.touchPadding),p);
-    }
-    // The visible rail and its touch target belong to the SAME button.
-    // Convert into the drawing layer's own local coordinates, not screen coordinates.
-    CAShapeLayer *shape = self.railShape;
-    CGPoint local = [shape convertPoint:p fromLayer:self.layer];
-    CAShapeLayer *visible = (CAShapeLayer *)shape.presentationLayer;
-    CGPathRef path = visible.path ?: shape.path;
-    if (!path) return NO;
-    if (CGPathContainsPoint(path,NULL,local,false)) return YES;
-    if (self.railExpanded) return NO;
-    // Only a small tolerance around the visible closed tab, never a remote hitbox.
-    return CGRectContainsPoint(CGRectInset(CGPathGetPathBoundingBox(path),-14,-7),local);
-}
-@end
-
+// Ordinary UIKit buttons: no custom pointInside, presentation-layer conversion,
+// or full-screen UIControl can interfere with a standard touch-up action.
 // A subview of the actual guest window, not a second transparent UIWindow.
 // UIKit resolves touches normally within the guest's own responder hierarchy.
 @interface MBEdgeTouchView : UIView
@@ -121,51 +99,12 @@ static BOOL MBEdgeLocalGainAvailable(void) {
            (gMBAudioAVPlayerSetVolume || gMBAudioAVAudioPlayerSetVolume || gMBAudioAVRendererSetVolume);
 }
 
-// Passive observer: never recognizes or cancels the guest's gestures.
-@interface MBEdgeActivityObserver : UIGestureRecognizer
-@property(nonatomic,weak) UIView *edgeView;
-@property(nonatomic,strong) NSMutableSet<UITouch *> *activeTouches;
-@property(nonatomic,strong) NSMutableSet<UITouch *> *insideTouches;
-@property(nonatomic,copy) void (^activityChanged)(NSUInteger insideCount, BOOL outsideBegan);
-@end
-@implementation MBEdgeActivityObserver
-- (BOOL)canPreventGestureRecognizer:(UIGestureRecognizer *)other { return NO; }
-- (BOOL)canBePreventedByGestureRecognizer:(UIGestureRecognizer *)other { return NO; }
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    if (!self.activeTouches) self.activeTouches = [NSMutableSet set];
-    if (!self.insideTouches) self.insideTouches = [NSMutableSet set];
-    BOOL outside = NO;
-    for (UITouch *touch in touches) {
-        [self.activeTouches addObject:touch];
-        UIView *target = touch.view;
-        if (self.edgeView && (target == self.edgeView || [target isDescendantOfView:self.edgeView])) {
-            [self.insideTouches addObject:touch];
-        } else {
-            outside = YES;
-        }
-    }
-    if (self.activityChanged) self.activityChanged(self.insideTouches.count, outside);
-}
-- (void)finishTouches:(NSSet<UITouch *> *)touches {
-    [self.activeTouches minusSet:touches];
-    [self.insideTouches minusSet:touches];
-    if (self.activityChanged) self.activityChanged(self.insideTouches.count, NO);
-    if (!self.activeTouches.count) self.state = UIGestureRecognizerStateFailed;
-}
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self finishTouches:touches]; }
-- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self finishTouches:touches]; }
-- (void)reset {
-    BOOL hadInside = self.insideTouches.count > 0;
-    [self.activeTouches removeAllObjects];
-    [self.insideTouches removeAllObjects];
-    if (hadInside && self.activityChanged) self.activityChanged(0, NO);
-    [super reset];
-}
-@end
-
-@interface MBEdgeController : UIViewController
+// Only observe outside taps while the panel is open. The opening button
+// never competes with a window-wide gesture recognizer.
+@interface MBEdgeController : UIViewController <UIGestureRecognizerDelegate>
 @property(nonatomic,strong) CAShapeLayer *rail;
-@property(nonatomic,strong) MBEdgeButton *tab;
+@property(nonatomic,strong) UIButton *tab;
+@property(nonatomic,strong) UIView *tabMark;
 @property(nonatomic,strong) UIButton *sync;
 @property(nonatomic,strong) UIButton *speaker;
 @property(nonatomic,strong) UIView *volumeCapsule;
@@ -178,8 +117,8 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 @property(nonatomic,assign) BOOL right;
 @property(nonatomic,assign) CGFloat anchor;
 @property(nonatomic,strong) NSTimer *idleTimer;
-@property(nonatomic,assign) NSUInteger insideTouchCount;
-@property(nonatomic,strong) MBEdgeActivityObserver *activityObserver;
+@property(nonatomic,strong) UITapGestureRecognizer *outsideTap;
+@property(nonatomic,weak) UIWindow *activityWindow;
 - (void)layoutEdge:(BOOL)animated;
 - (void)closeEdge;
 - (void)restartIdleTimer;
@@ -188,14 +127,15 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 
 @implementation MBEdgeController
 - (UIButton *)button:(NSString *)symbol color:(UIColor *)color label:(NSString *)label action:(SEL)action {
-    MBEdgeButton *b = [MBEdgeButton buttonWithType:UIButtonTypeCustom];
-    b.touchPadding = 4;
+    UIButton *b = [[UIButton alloc] initWithFrame:CGRectZero];
     b.tintColor = UIColor.whiteColor;
     b.backgroundColor = color;
     b.layer.cornerRadius = 22.5;
     [b setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
     b.accessibilityLabel = label;
     [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    [b addTarget:self action:@selector(controlTouchStarted:) forControlEvents:UIControlEventTouchDown];
+    [b addTarget:self action:@selector(controlTouchFinished:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
     return b;
 }
 - (void)loadView {
@@ -205,19 +145,16 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     self.anchor = .54;
     self.rail = [CAShapeLayer layer];
     self.rail.fillColor = UIColor.blackColor.CGColor;
-    self.tab = (MBEdgeButton *)[self button:@"" color:UIColor.clearColor label:@"MediaBloom Edge" action:@selector(toggle:)];
-    self.tab.railShape = self.rail;
+    [self.view.layer addSublayer:self.rail];
+    self.tab = [self button:@"" color:UIColor.clearColor label:@"MediaBloom Edge" action:@selector(toggle:)];
     self.tab.layer.cornerRadius = 0;
-    self.tab.clipsToBounds = NO;
-    [self.tab.layer addSublayer:self.rail];
     [self.tab setImage:nil forState:UIControlStateNormal];
-    UIView *mark = [[UIView alloc] initWithFrame:CGRectMake(9,20,2,25)];
-    mark.tag = 101;
-    mark.backgroundColor = [UIColor colorWithRed:.60 green:.43 blue:.93 alpha:1];
-    mark.layer.cornerRadius = 1;
-    mark.userInteractionEnabled = NO;
-    [self.tab addSubview:mark];
+    self.tabMark = [[UIView alloc] initWithFrame:CGRectZero];
+    self.tabMark.backgroundColor = [UIColor colorWithRed:.60 green:.43 blue:.93 alpha:1];
+    self.tabMark.layer.cornerRadius = 1;
+    self.tabMark.userInteractionEnabled = NO;
     [self.view addSubview:self.tab];
+    [self.tab addSubview:self.tabMark];
     self.sync = [self button:@"arrow.triangle.2.circlepath" color:[UIColor colorWithRed:.60 green:.43 blue:.93 alpha:1] label:@"Resincronizar Music Haptics" action:@selector(resync:)];
     [self.view addSubview:self.sync];
     self.volumeCapsule = [[UIView alloc] initWithFrame:CGRectZero];
@@ -235,7 +172,8 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     self.slider.maximumTrackTintColor = [UIColor colorWithWhite:1 alpha:.24];
     self.slider.accessibilityLabel = @"Volumen individual de MediaBloom";
     [self.slider addTarget:self action:@selector(changeGuestGain:) forControlEvents:UIControlEventValueChanged];
-    [self.slider addTarget:self action:@selector(sliderTouchFinished:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+    [self.slider addTarget:self action:@selector(controlTouchStarted:) forControlEvents:UIControlEventTouchDown];
+    [self.slider addTarget:self action:@selector(controlTouchFinished:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
     [self.volumeCapsule insertSubview:self.slider belowSubview:self.speaker];
     self.volumeUnavailable = [[UILabel alloc] initWithFrame:CGRectZero];
     self.volumeUnavailable.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
@@ -256,16 +194,13 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 }
 - (void)restartIdleTimer {
     [self cancelIdleTimer];
-    if (!self.expanded || self.insideTouchCount || self.slider.tracking) return;
+    if (!self.expanded || self.slider.tracking) return;
     __weak MBEdgeController *weakSelf = self;
     NSTimer *timer = [NSTimer timerWithTimeInterval:3.0 repeats:NO block:^(NSTimer *fired) {
         MBEdgeController *strongSelf = weakSelf;
         if (!strongSelf || strongSelf.idleTimer != fired) return;
         strongSelf.idleTimer = nil;
-        if (strongSelf.insideTouchCount || strongSelf.slider.tracking) {
-            [strongSelf restartIdleTimer];
-            return;
-        }
+        if (strongSelf.slider.tracking) return; // touch-up restarts the timer.
         [strongSelf closeEdge];
     }];
     self.idleTimer = timer;
@@ -276,38 +211,37 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     if (!self.expanded) return;
     self.expanded = NO;
     self.volumeExpanded = NO;
+    self.outsideTap.enabled = NO;
     [self animate];
 }
 - (void)attachActivityObserverToWindow:(UIWindow *)window {
-    if (self.activityObserver && self.activityObserver.view == window) return;
-    if (self.activityObserver) {
-        [self.activityObserver.view removeGestureRecognizer:self.activityObserver];
-        self.activityObserver = nil;
-    }
-    self.insideTouchCount = 0;
+    if (self.activityWindow == window && self.outsideTap) return;
+    if (self.outsideTap) [self.activityWindow removeGestureRecognizer:self.outsideTap];
+    self.outsideTap = nil;
+    self.activityWindow = window;
     [self cancelIdleTimer];
     if (!window) { [self closeEdge]; return; }
-    MBEdgeActivityObserver *observer = [[MBEdgeActivityObserver alloc] initWithTarget:nil action:NULL];
-    observer.edgeView = self.view;
-    observer.cancelsTouchesInView = NO;
-    observer.delaysTouchesBegan = NO;
-    observer.delaysTouchesEnded = NO;
-    __weak MBEdgeController *weakSelf = self;
-    observer.activityChanged = ^(NSUInteger insideCount, BOOL outsideBegan) {
-        MBEdgeController *strongSelf = weakSelf;
-        if (!strongSelf) return;
-        strongSelf.insideTouchCount = insideCount;
-        if (!strongSelf.expanded) return;
-        if (outsideBegan) { [strongSelf closeEdge]; return; }
-        if (insideCount) [strongSelf cancelIdleTimer];
-        else [strongSelf restartIdleTimer];
-    };
-    self.activityObserver = observer;
-    [window addGestureRecognizer:observer];
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(outsideTapped:)];
+    tap.cancelsTouchesInView = NO;
+    tap.delaysTouchesBegan = NO;
+    tap.delaysTouchesEnded = NO;
+    tap.delegate = self;
+    tap.enabled = self.expanded;
+    [window addGestureRecognizer:tap];
+    self.outsideTap = tap;
     [self restartIdleTimer];
 }
-- (void)sliderTouchFinished:(UISlider *)slider {
-    // UIControl may finish tracking after the passive observer sees touch-up.
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceiveTouch:(UITouch *)touch {
+    if (recognizer != self.outsideTap || !self.expanded) return NO;
+    UIView *target = touch.view;
+    return target && target != self.view && ![target isDescendantOfView:self.view];
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other { return YES; }
+- (void)outsideTapped:(UITapGestureRecognizer *)tap {
+    if (tap.state == UIGestureRecognizerStateRecognized) [self closeEdge];
+}
+- (void)controlTouchStarted:(UIControl *)control { [self cancelIdleTimer]; }
+- (void)controlTouchFinished:(UIControl *)control {
     dispatch_async(dispatch_get_main_queue(), ^{ [self restartIdleTimer]; });
 }
 - (void)refreshGuestGain {
@@ -391,14 +325,12 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     CGFloat fullHeight=MIN(426,h-16);
     CGFloat scale=MIN(1,fullHeight/426), cy=MAX(fullHeight/2+8,MIN(h-fullHeight/2-8,h*self.anchor));
     CGFloat height=self.expanded?fullHeight:80, width=self.expanded?79:12;
-    // Fix the layer's frame explicitly: a free-standing CAShapeLayer may
-    // otherwise draw outside zero-sized bounds while hit testing elsewhere.
-    self.tab.frame = bounds;
+    // Draw in root-view coordinates. The native button is laid out from the
+    // exact same path's bounding box, with no layer-space hit testing.
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    self.rail.frame = self.tab.bounds;
+    self.rail.frame = bounds;
     [CATransaction commit];
-    self.tab.railExpanded = self.expanded;
     UIBezierPath *p=[self pathWidth:width height:height center:cy];
     if (animated && self.rail.path) {
         CABasicAnimation *m=[CABasicAnimation animationWithKeyPath:@"path"];
@@ -411,12 +343,13 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     [CATransaction begin]; [CATransaction setDisableActions:YES]; self.rail.path=p.CGPath; [CATransaction commit];
     CGFloat x=self.right?w-38:38, size=45*scale;
     CGFloat row=55*scale, first=cy-145*scale;
-    UIView *mark = [self.tab viewWithTag:101];
-    mark.frame = CGRectMake(self.right?w-6:5,cy-12.5,2,25);
-    mark.alpha = self.expanded ? 0 : 1;
+    CGRect contour = CGPathGetPathBoundingBox(p.CGPath);
+    CGRect target = CGRectIntersection(bounds, CGRectInset(contour, self.expanded ? 0 : -14, self.expanded ? 0 : -7));
+    // The view's frame IS the tappable area. UIKit handles the whole touch.
+    self.tab.frame = target;
+    self.tabMark.frame = CGRectMake((self.right ? w-6 : 5)-CGRectGetMinX(target),cy-12.5-CGRectGetMinY(target),2,25);
+    self.tabMark.hidden = self.expanded;
     self.tab.accessibilityLabel = self.expanded ? @"Cerrar menú lateral" : @"Abrir menú lateral";
-    CGRect accessibleRect = CGRectIntersection(bounds,CGRectInset(CGPathGetPathBoundingBox(p.CGPath),-14,-7));
-    self.tab.accessibilityFrame = UIAccessibilityConvertFrameToScreenCoordinates(accessibleRect, self.tab);
     self.sync.frame=CGRectMake(x-size/2,first-size/2,size,size);
     CGFloat volY=first+row;
     CGFloat capWidth=self.volumeExpanded?MIN(215,w-32):size;
@@ -448,14 +381,11 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     if (self.expanded) { [self closeEdge]; return; }
     self.expanded=YES;
     [self animate];
+    // Enable only after the opening touch is finished, not on touch-down.
+    dispatch_async(dispatch_get_main_queue(), ^{ if (self.expanded) self.outsideTap.enabled = YES; });
     [self restartIdleTimer];
-    {
-        // Cached on attachment; refresh after the opening tap has completed.
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [self refreshApps];
-            [self layoutEdge:NO];
-        });
-    }
+    // The app list is cached when attaching the overlay; do not relayout
+    // during the opening animation or while UIKit is delivering a touch.
 }
 - (void)toggleVolume:(id)sender {
     if (!self.volumeExpanded) [self refreshGuestGain];
