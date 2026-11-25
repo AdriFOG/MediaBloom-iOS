@@ -4,7 +4,7 @@ from pathlib import Path
 
 source = Path('LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift').read_text()
 assert source.count('struct MediaBloomReferenceView: View') == 1
-assert source.count('MediaBloomReferenceView(model: model)') == 1
+assert source.count('MediaBloomReferenceView(model: model, allSharedGuests: apps)') == 1
 assert 'if geometry.size.width > geometry.size.height' in source
 assert 'private func portraitLayout' in source
 assert 'private func landscapeLayout' in source
