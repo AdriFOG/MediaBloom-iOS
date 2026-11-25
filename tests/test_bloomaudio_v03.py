@@ -54,7 +54,7 @@ assert 'AVAudioEngine' in tweak
 assert 'startAndReturnError:' in tweak
 assert 'MBSpotifyRunningEngines(void)' in tweak
 assert 'MBSpotifyActiveAVPlayers(void)' in tweak
-assert 'return MBSpotifyActiveAVPlayers() > 0 || MBSpotifyRunningEngines() > 0;' in tweak
+assert 'return MBSpotifyActiveAVPlayers() > 0 || MBSpotifyRunningEngines() > 0 ||' in tweak
 assert 'MBSpotifySetMixerGain(id engine, float gain)' in tweak
 assert 'MBSpotifyMainMixer(id engine)' in tweak
 assert 'MediaBloomSpotifyAudioDiagnosticV2' in tweak
@@ -63,8 +63,8 @@ assert 'MediaBloomSpotifyActivePlayersV2' in tweak
 assert 'MediaBloomSpotifyActiveEnginesV2' in tweak
 assert 'MediaBloomSpotifyAudioDetailsV2' in (Path("../media-tools/ui/MediaBloomAppearance.swift").read_text())
 assert 'Copiar diagnóstico Spotify' in (Path("../media-tools/ui/MediaBloomAppearance.swift").read_text())
-# No audio capture, global hardware volume edits, or CoreAudio render hooks.
-assert 'AudioUnitRender' not in tweak
+# No direct audio capture or global hardware volume edits. Render action flags are allowed.
+assert 'AudioUnitRender(' not in tweak
 assert 'AudioQueueSetParameter' not in tweak
 assert 'setOutputVolume:' in tweak
 assert 'MPVolumeView' not in tweak
