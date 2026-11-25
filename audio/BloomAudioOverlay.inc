@@ -130,7 +130,9 @@ static void MBApplyLiveGain(void);
     self.muteButton.enabled = controllable;
     if (spotify) {
         self.guestLabel.text = controllable
-            ? @"Spotify · AV beta" : @"Spotify · sin ruta AV";
+            ? (MBSpotifyAUHasConfirmedPCM() ? @"Spotify · AudioUnit PCM beta"
+                                           : @"Spotify · AV beta")
+            : @"Spotify · sin ruta AV";
     }
     float gain = self.gainSlider.value;
     self.percentLabel.text = controllable
