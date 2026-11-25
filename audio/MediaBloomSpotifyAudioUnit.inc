@@ -30,12 +30,15 @@ static _Atomic(uint64_t) gMBSpotifyAUAttenuatedCount;
 static _Atomic(uint64_t) gMBSpotifyAUStartCount;
 static _Atomic(float) gMBSpotifyAUGain = 1.0f;
 static BOOL gMBSpotifyAUHookInstalled;
+static NSTimeInterval gMBSpotifyAULastStatusAt;
 static MBSpotifyAUSetPropertyFn gMBSpotifyAUOriginalSetProperty;
 static MBSpotifyAUStartFn gMBSpotifyAUOriginalStart;
 static MBSpotifyAUGetPropertyFn gMBSpotifyAUOriginalGetProperty;
 
 static int MBSpotifyAUFormatKind(const AudioStreamBasicDescription *format) {
     if (!format || format->mFormatID != kAudioFormatLinearPCM ||
+        format->mBytesPerFrame == 0 ||
+        !(format->mFormatFlags & kAudioFormatFlagIsPacked) ||
         (format->mFormatFlags & kAudioFormatFlagIsBigEndian) ||
         (format->mFormatFlags & kAudioFormatFlagIsNonMixable)) return 0;
     // Only packed canonical PCM; compressed/planar byte layouts are never
@@ -234,6 +237,10 @@ static void MBSpotifyAUInstallHooks(void) {
 
 static void MBSpotifyAUPublishStatus(void) {
     if (!MBIsSpotifyGuest(gMBAudioGuest)) return;
+    NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
+    // Never force a cross-process defaults flush on every 300 ms heartbeat.
+    if (now - gMBSpotifyAULastStatusAt < 1.5) return;
+    gMBSpotifyAULastStatusAt = now;
     uint64_t renders = atomic_load_explicit(&gMBSpotifyAURenderCount,
                                             memory_order_relaxed);
     uint64_t pcm = atomic_load_explicit(&gMBSpotifyAUNonzeroPCMCount,
