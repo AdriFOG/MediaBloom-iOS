@@ -11,7 +11,16 @@
 
 static const char kMBAudioBaseVolumeKey = 0;
 static NSHashTable *gMBAudioObjects;
+static NSHashTable *gMBSpotifyEngines;   // Weak: no retention of Spotify's player graph.
 static NSString *gMBAudioGuest;
+static NSTimeInterval gMBSpotifyLastDiagnosticAt = 0;
+static NSString *gMBSpotifyLastDiagnosticSignature = nil;
+static const char kMBSpotifyBaseMixerVolumeKey = 0;
+static BOOL MBSpotifyEngineIsRunning(id engine);
+static NSInteger MBSpotifyActiveAVPlayers(void);
+static NSInteger MBSpotifyRunningEngines(void);
+static void MBSpotifyReportAudioState(BOOL force);
+static void MBApplySpotifyEngineGain(void);
 static float gMBAudioLastAppliedGain = 1.0f;
 static void MBStartVolumeOverlay(void);
 static void MBRefreshVolumeOverlayControls(void);
@@ -21,6 +30,8 @@ static IMP gMBAudioAVPlayerSetRate;
 static IMP gMBAudioAVAudioPlayerSetVolume;
 static IMP gMBAudioAVAudioPlayerPlay;
 static IMP gMBAudioAVRendererSetVolume;
+static IMP gMBSpotifyEngineStart;
+static IMP gMBSpotifyEngineStop;
 
 static float MBClampVolume(float value) {
     if (!isfinite(value)) return 1.0f;
@@ -40,11 +51,12 @@ static BOOL MBIsSupportedGuest(NSString *identifier) {
            MBIsSpotifyGuest(name);
 }
 
-// A hook being installed does NOT imply that Spotify routes its actual
-// sound through AVFoundation. Enable its slider only after we observe a
-// real player instance inside the guest.
+// Presence is not playback. The original 3 detected players were a false
+// positive: Spotify's real stream did not respond to changing their volume.
+// Only expose volume controls when an observed AV player is playing or
+// a Spotify-hosted AVAudioEngine is running. Neither guarantees audibility.
 static BOOL MBSpotifyAudioAvailable(void) {
-    return gMBAudioObjects != nil && gMBAudioObjects.allObjects.count > 0;
+    return MBSpotifyActiveAVPlayers() > 0 || MBSpotifyRunningEngines() > 0;
 }
 
 static BOOL MBIsMediaHost(void) {
@@ -89,12 +101,164 @@ static void MBSetOriginalVolume(id player, float requestedVolume) {
 }
 
 static void MBApplyLiveGain(void) {
-    // The floating slider runs in the guest process. Native player setters
-    // are called directly, not through our hooks, so changes apply immediately.
+    // This never touches iOS device volume or a system-wide audio session.
     gMBAudioLastAppliedGain = MBCurrentGain();
     for (id player in gMBAudioObjects.allObjects) {
         MBSetOriginalVolume(player, MBRequestedBaseVolume(player));
     }
+    if (MBIsSpotifyGuest(gMBAudioGuest)) MBApplySpotifyEngineGain();
+}
+
+// Spotify audio diagnosis: distinguish real playback from unrelated UI/ad
+// players. Public AVFoundation APIs are inspected on the guest's main queue.
+static BOOL MBSpotifyEngineIsRunning(id engine) {
+    return engine && [engine respondsToSelector:@selector(isRunning)] &&
+        ((BOOL(*)(id, SEL))objc_msgSend)(engine, @selector(isRunning));
+}
+
+static NSInteger MBSpotifyActiveAVPlayers(void) {
+    NSInteger count = 0;
+    Class videoPlayer = NSClassFromString(@"AVPlayer");
+    Class audioPlayer = NSClassFromString(@"AVAudioPlayer");
+    for (id player in gMBAudioObjects.allObjects) {
+        if (videoPlayer && [player isKindOfClass:videoPlayer]) {
+            id item = ((id(*)(id, SEL))objc_msgSend)(player, @selector(currentItem));
+            float rate = ((float(*)(id, SEL))objc_msgSend)(player, @selector(rate));
+            if (item && rate > 0.01f) count++;
+        } else if (audioPlayer && [player isKindOfClass:audioPlayer]) {
+            if (((BOOL(*)(id, SEL))objc_msgSend)(player, @selector(isPlaying))) count++;
+        }
+        // AVSampleBufferAudioRenderer is not evidence of audible playback:
+        // ready/status alone does not imply the output path is running.
+    }
+    return count;
+}
+
+static NSInteger MBSpotifyRunningEngines(void) {
+    NSInteger count = 0;
+    for (id engine in gMBSpotifyEngines.allObjects) {
+        if (MBSpotifyEngineIsRunning(engine)) count++;
+    }
+    return count;
+}
+
+// The main mixer affects only its own AVAudioEngine graph, never the
+// hardware/system volume. We do not replace the AudioUnit render callback.
+static id MBSpotifyMainMixer(id engine) {
+    return engine && [engine respondsToSelector:@selector(mainMixerNode)]
+        ? ((id(*)(id, SEL))objc_msgSend)(engine, @selector(mainMixerNode)) : nil;
+}
+static void MBSpotifySetMixerGain(id engine, float gain) {
+    if (!MBSpotifyEngineIsRunning(engine)) return;
+    id mixer = MBSpotifyMainMixer(engine);
+    if (!mixer || ![mixer respondsToSelector:@selector(setOutputVolume:)]) return;
+    NSNumber *original = objc_getAssociatedObject(mixer, &kMBSpotifyBaseMixerVolumeKey);
+    if (!original) {
+        float base = [mixer respondsToSelector:@selector(outputVolume)]
+            ? ((float(*)(id, SEL))objc_msgSend)(mixer, @selector(outputVolume)) : 1.0f;
+        original = @(MBClampVolume(base));
+        objc_setAssociatedObject(mixer, &kMBSpotifyBaseMixerVolumeKey,
+                                 original, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    float adjusted = MBClampVolume(original.floatValue) * gain;
+    ((void(*)(id, SEL, float))objc_msgSend)(mixer, @selector(setOutputVolume:), adjusted);
+}
+static void MBApplySpotifyEngineGain(void) {
+    for (id engine in gMBSpotifyEngines.allObjects) {
+        MBSpotifySetMixerGain(engine, MBCurrentGain());
+    }
+}
+
+static void MBSpotifyTrackEngine(id engine) {
+    if (!engine) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!gMBSpotifyEngines || !MBSpotifyEngineIsRunning(engine)) return;
+        [gMBSpotifyEngines addObject:engine];
+        MBSpotifySetMixerGain(engine, MBCurrentGain());
+        MBSpotifyReportAudioState(YES);
+    });
+}
+static BOOL MBSpotifyEngineStart(id engine, SEL cmd, NSError **error) {
+    BOOL success = ((BOOL(*)(id, SEL, NSError **))gMBSpotifyEngineStart)(engine, cmd, error);
+    if (success) MBSpotifyTrackEngine(engine);
+    return success;
+}
+static void MBSpotifyEngineStop(id engine, SEL cmd) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // Never hold an engine after stopping or reconfigure its audio route.
+        [gMBSpotifyEngines removeObject:engine];
+        MBSpotifyReportAudioState(YES);
+    });
+    ((void(*)(id, SEL))gMBSpotifyEngineStop)(engine, cmd);
+}
+
+static void MBSpotifyReportAudioState(BOOL force) {
+    if (!MBIsSpotifyGuest(gMBAudioGuest)) return;
+    NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
+    if (!force && now - gMBSpotifyLastDiagnosticAt < 1.4) return;
+    gMBSpotifyLastDiagnosticAt = now;
+
+    NSInteger detected = gMBAudioObjects.allObjects.count;
+    NSInteger playing = MBSpotifyActiveAVPlayers();
+    NSInteger engines = MBSpotifyRunningEngines();
+    NSString *route = @"desconocida";
+    Class sessionClass = NSClassFromString(@"AVAudioSession");
+    if (sessionClass && [sessionClass respondsToSelector:@selector(sharedInstance)]) {
+        id session = ((id(*)(id, SEL))objc_msgSend)(sessionClass, @selector(sharedInstance));
+        if ([session respondsToSelector:@selector(currentRoute)]) {
+            id routeObj = ((id(*)(id, SEL))objc_msgSend)(session, @selector(currentRoute));
+            if ([routeObj respondsToSelector:@selector(outputs)]) {
+                NSArray *outputs = ((id(*)(id, SEL))objc_msgSend)(routeObj, @selector(outputs));
+                id output = outputs.firstObject;
+                if ([output respondsToSelector:@selector(portType)]) {
+                    route = ((id(*)(id, SEL))objc_msgSend)(output, @selector(portType)) ?: route;
+                }
+            }
+        }
+    }
+
+    NSString *signature = [NSString stringWithFormat:@"%ld/%ld/%ld/%@",
+        (long)detected, (long)playing, (long)engines, route];
+    if (!force && [signature isEqualToString:gMBSpotifyLastDiagnosticSignature]) return;
+    gMBSpotifyLastDiagnosticSignature = signature;
+
+    NSMutableArray<NSString *> *details = [NSMutableArray array];
+    Class avPlayer = NSClassFromString(@"AVPlayer");
+    Class avAudioPlayer = NSClassFromString(@"AVAudioPlayer");
+    for (id p in gMBAudioObjects.allObjects) {
+        NSString *activity = @"sin señal activa";
+        if (avPlayer && [p isKindOfClass:avPlayer]) {
+            float rate = ((float(*)(id, SEL))objc_msgSend)(p, @selector(rate));
+            BOOL item = ((id(*)(id, SEL))objc_msgSend)(p, @selector(currentItem)) != nil;
+            activity = [NSString stringWithFormat:@"rate %.2f, item %@", rate, item ? @"sí":@"no"];
+        } else if (avAudioPlayer && [p isKindOfClass:avAudioPlayer]) {
+            activity = ((BOOL(*)(id, SEL))objc_msgSend)(p, @selector(isPlaying))
+                ? @"isPlaying sí" : @"isPlaying no";
+        }
+        [details addObject:[NSString stringWithFormat:@"%@: %@",
+                           NSStringFromClass([p class]), activity]];
+    }
+    NSString *summary = [NSString stringWithFormat:
+       @"AV reproduciendo %ld/%ld; AVAudioEngine activos %ld; salida %@. %@",
+       (long)playing, (long)detected, (long)engines, route,
+       (playing || engines)
+         ? @"Hay posibles rutas AV, pero falta confirmar que generan la música."
+         : @"Si Spotify está sonando, probablemente usa AudioUnit/AudioQueue u otra ruta no controlada."];
+    NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
+    [shared setInteger:playing forKey:@"MediaBloomSpotifyActivePlayersV2"];
+    [shared setInteger:engines forKey:@"MediaBloomSpotifyActiveEnginesV2"];
+    [shared setObject:summary forKey:@"MediaBloomSpotifyAudioDiagnosticV2"];
+
+    NSString *line = [NSString stringWithFormat:@"%@ · %@",
+                      [NSDateFormatter localizedStringFromDate:[NSDate date]
+                          dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterMediumStyle],
+                      [@([details count]) description]];
+    (void)line; // Summary and per-player state are shared for a copyable report.
+    NSString *report = [NSString stringWithFormat:@"%@\n%@",
+                         summary, [details componentsJoinedByString:@"\n"]];
+    [shared setObject:report forKey:@"MediaBloomSpotifyAudioDetailsV2"];
+    [shared synchronize];
+    NSLog(@"[BloomAudio] Spotify playback route: %@", summary);
 }
 
 static void MBTrackPlayerOnMain(id player) {
