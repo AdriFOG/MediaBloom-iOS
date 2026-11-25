@@ -204,6 +204,7 @@ struct MediaBloomAppearanceSheet: View {
     @State private var spotifyActiveAVPlayers = 0
     @State private var spotifyActiveAudioEngines = 0
     @State private var spotifyAudioReport = ""
+    @State private var spotifyAudioUnitReport = ""
     @AppStorage("MediaBloomHapticsAutoISRCV1", store: LCUtils.appGroupUserDefault)
     private var automaticMusicHaptics = false
     @AppStorage("MediaBloomHapticsGuestOverlayV1", store: LCUtils.appGroupUserDefault)
@@ -221,6 +222,7 @@ struct MediaBloomAppearanceSheet: View {
         spotifyActiveAVPlayers = shared.integer(forKey: "MediaBloomSpotifyActivePlayersV2")
         spotifyActiveAudioEngines = shared.integer(forKey: "MediaBloomSpotifyActiveEnginesV2")
         spotifyAudioReport = shared.string(forKey: "MediaBloomSpotifyAudioDetailsV2") ?? ""
+        spotifyAudioUnitReport = shared.string(forKey: "MediaBloomSpotifyAudioUnitStatusV1") ?? ""
     }
 
     var body: some View {
@@ -452,13 +454,20 @@ struct MediaBloomAppearanceSheet: View {
                        "Finding players doesn't prove they control the music. We also test AVAudioEngine without changing iPhone system volume."))
                     .font(.caption)
                     .foregroundColor(.secondary)
+                if !spotifyAudioUnitReport.isEmpty {
+                    Text(spotifyAudioUnitReport)
+                        .font(.caption2.monospaced())
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !spotifyAudioReport.isEmpty {
                     Text(spotifyAudioReport)
                         .font(.caption2.monospaced())
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                     Button {
-                        UIPasteboard.general.string = spotifyAudioReport
+                        UIPasteboard.general.string = [spotifyAudioReport,
+                            spotifyAudioUnitReport].filter { !$0.isEmpty }
+                                .joined(separator: "\n")
                     } label: {
                         Label(t("Copiar diagnóstico Spotify", "Copy Spotify diagnosis"),
                               systemImage: "doc.on.doc")
