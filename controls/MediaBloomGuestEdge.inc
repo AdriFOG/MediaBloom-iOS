@@ -415,7 +415,8 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     mark.frame = CGRectMake(self.right?w-6:5,cy-12.5,2,25);
     mark.alpha = self.expanded ? 0 : 1;
     self.tab.accessibilityLabel = self.expanded ? @"Cerrar menú lateral" : @"Abrir menú lateral";
-    self.tab.accessibilityFrameInContainerSpace = CGRectIntersection(bounds,CGRectInset(CGPathGetPathBoundingBox(p.CGPath),-14,-7));
+    CGRect accessibleRect = CGRectIntersection(bounds,CGRectInset(CGPathGetPathBoundingBox(p.CGPath),-14,-7));
+    self.tab.accessibilityFrame = UIAccessibilityConvertFrameToScreenCoordinates(accessibleRect, self.tab);
     self.sync.frame=CGRectMake(x-size/2,first-size/2,size,size);
     CGFloat volY=first+row;
     CGFloat capWidth=self.volumeExpanded?MIN(215,w-32):size;
