@@ -177,6 +177,12 @@ struct MediaBloomAppearanceSheet: View {
     @AppStorage("MediaBloomGlassTintHexV1") private var glassTint = "F5F4F1"
     @AppStorage("MediaBloomAudioProbeEnabledV1", store: LCUtils.appGroupUserDefault)
     private var audioEnabled = false
+    @AppStorage("MediaBloomEdgeEnabledV1", store: LCUtils.appGroupUserDefault)
+    private var edgeEnabled = true
+    @AppStorage("MediaBloomEdgeOpacityV1", store: LCUtils.appGroupUserDefault)
+    private var edgeOpacity = 1.0
+    @AppStorage("MediaBloomEdgeRightV1", store: LCUtils.appGroupUserDefault)
+    private var edgeRight = true
     @State private var showPhotos = false
     @State private var showFiles = false
     @State private var hasWallpaper = false
@@ -201,6 +207,7 @@ struct MediaBloomAppearanceSheet: View {
                 glassSection
                 mediaTagsSection
                 audioSection
+                edgeSection
                 hapticsSection
                 advancedSection
             }
@@ -325,6 +332,23 @@ struct MediaBloomAppearanceSheet: View {
                    "Panels blur the wallpaper while keeping labels and buttons readable."))
                 .font(.footnote)
                 .foregroundColor(.secondary)
+        }
+    }
+
+    private var edgeSection: some View {
+        Section(header: Text("MediaBloom Edge")) {
+            Toggle(t("Menú lateral", "Edge menu"), isOn: $edgeEnabled)
+            Toggle(t("Borde derecho", "Right edge"), isOn: $edgeRight)
+            HStack {
+                Text(t("Opacidad", "Opacity"))
+                Spacer()
+                Text("\(Int((edgeOpacity * 100).rounded()))%").monospacedDigit()
+            }
+            Slider(value: $edgeOpacity, in: 0...1, step: 0.01)
+            Button(t("Restaurar negro puro", "Restore pure black")) { edgeOpacity = 1 }
+            Text(t("0%: transparente. 100%: negro puro. Los botones siguen visibles. Vuelve a abrir el reproductor para aplicar los ajustes.",
+                   "0%: transparent. 100%: pure black. Buttons remain visible. Reopen the player to apply settings."))
+                .font(.footnote).foregroundColor(.secondary)
         }
     }
 
