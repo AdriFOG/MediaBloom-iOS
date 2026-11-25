@@ -167,4 +167,24 @@ assert "try await player.runApp(multitask: false, urlStr: link.absoluteString)" 
 for forbidden in ["AVAudioEngine", "AVAudioRecorder", "AVCaptureSession", "setNowPlayingInfo",
                   "requestRecordPermission"]:
     assert forbidden not in source, forbidden
+
+# Temporary Music Haptics progress coexists with Edge; it never remains
+# blocking the media player after completion or a manual swipe.
+assert 'id edgeChoice = [shared objectForKey:@"MediaBloomEdgeEnabledV1"]' not in guest_overlay
+assert "gMBMHOverlayDismissedSong" in guest_overlay
+assert "MBMHHideGuestOverlay(YES)" in guest_overlay
+assert "UISwipeGestureRecognizerDirectionLeft" in guest_overlay
+assert "UISwipeGestureRecognizerDirectionRight" in guest_overlay
+assert "UISwipeGestureRecognizerDirectionUp" in guest_overlay
+assert '[@[@"searching", @"checking", @"resyncing"] containsObject:state]' in guest_overlay
+
+# The Edge app selector is media-only, user-ordered, limited to four, and
+# preserves legacy automatic shortcuts until the user picks a selection.
+edge = Path("../media-tools/controls/MediaBloomGuestEdge.inc").read_text()
+assert "MediaBloomEdgeAppIDsV1" in edge and "self.selectionSnapshot = selection" in edge
+assert "ordered.count == 4" in edge
+assert "MBEdgeAppPicker(english: english)" in appearance
+assert "LCSharedUtils.appGroupPath()" in appearance
+assert "selected.count < 4" in appearance and "selected.move(fromOffsets:" in appearance
+assert "BloomBoxMediaTagV1." in appearance
 print("PASS: honest native Music Haptics readiness, tactile test and existing media isolation")
