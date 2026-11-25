@@ -1,5 +1,6 @@
 // MediaBloom only: native in-guest Edge menu. No changes to primary BloomBox.
 #import <UIKit/UIKit.h>
+#import <UIKit/UIGestureRecognizerSubclass.h>
 #import <QuartzCore/QuartzCore.h>
 
 static BOOL MBEdgeEnabled(void) {
@@ -120,6 +121,48 @@ static BOOL MBEdgeLocalGainAvailable(void) {
            (gMBAudioAVPlayerSetVolume || gMBAudioAVAudioPlayerSetVolume || gMBAudioAVRendererSetVolume);
 }
 
+// Passive observer: never recognizes or cancels the guest's gestures.
+@interface MBEdgeActivityObserver : UIGestureRecognizer
+@property(nonatomic,weak) UIView *edgeView;
+@property(nonatomic,strong) NSMutableSet<UITouch *> *activeTouches;
+@property(nonatomic,strong) NSMutableSet<UITouch *> *insideTouches;
+@property(nonatomic,copy) void (^activityChanged)(NSUInteger insideCount, BOOL outsideBegan);
+@end
+@implementation MBEdgeActivityObserver
+- (BOOL)canPreventGestureRecognizer:(UIGestureRecognizer *)other { return NO; }
+- (BOOL)canBePreventedByGestureRecognizer:(UIGestureRecognizer *)other { return NO; }
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (!self.activeTouches) self.activeTouches = [NSMutableSet set];
+    if (!self.insideTouches) self.insideTouches = [NSMutableSet set];
+    BOOL outside = NO;
+    for (UITouch *touch in touches) {
+        [self.activeTouches addObject:touch];
+        UIView *target = touch.view;
+        if (self.edgeView && (target == self.edgeView || [target isDescendantOfView:self.edgeView])) {
+            [self.insideTouches addObject:touch];
+        } else {
+            outside = YES;
+        }
+    }
+    if (self.activityChanged) self.activityChanged(self.insideTouches.count, outside);
+}
+- (void)finishTouches:(NSSet<UITouch *> *)touches {
+    [self.activeTouches minusSet:touches];
+    [self.insideTouches minusSet:touches];
+    if (self.activityChanged) self.activityChanged(self.insideTouches.count, NO);
+    if (!self.activeTouches.count) self.state = UIGestureRecognizerStateFailed;
+}
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self finishTouches:touches]; }
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self finishTouches:touches]; }
+- (void)reset {
+    BOOL hadInside = self.insideTouches.count > 0;
+    [self.activeTouches removeAllObjects];
+    [self.insideTouches removeAllObjects];
+    if (hadInside && self.activityChanged) self.activityChanged(0, NO);
+    [super reset];
+}
+@end
+
 @interface MBEdgeController : UIViewController
 @property(nonatomic,strong) CAShapeLayer *rail;
 @property(nonatomic,strong) MBEdgeButton *tab;
@@ -134,6 +177,13 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 @property(nonatomic,assign) BOOL volumeExpanded;
 @property(nonatomic,assign) BOOL right;
 @property(nonatomic,assign) CGFloat anchor;
+@property(nonatomic,strong) NSTimer *idleTimer;
+@property(nonatomic,assign) NSUInteger insideTouchCount;
+@property(nonatomic,strong) MBEdgeActivityObserver *activityObserver;
+- (void)layoutEdge:(BOOL)animated;
+- (void)closeEdge;
+- (void)restartIdleTimer;
+- (void)attachActivityObserverToWindow:(UIWindow *)window;
 @end
 
 @implementation MBEdgeController
@@ -185,6 +235,7 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     self.slider.maximumTrackTintColor = [UIColor colorWithWhite:1 alpha:.24];
     self.slider.accessibilityLabel = @"Volumen individual de MediaBloom";
     [self.slider addTarget:self action:@selector(changeGuestGain:) forControlEvents:UIControlEventValueChanged];
+    [self.slider addTarget:self action:@selector(sliderTouchFinished:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
     [self.volumeCapsule insertSubview:self.slider belowSubview:self.speaker];
     self.volumeUnavailable = [[UILabel alloc] initWithFrame:CGRectZero];
     self.volumeUnavailable.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
@@ -198,6 +249,66 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     __weak MBEdgeController *weakSelf = self;
     ((MBEdgeTouchView *)self.view).boundsDidChange = ^{ [weakSelf layoutEdge:NO]; };
     // No competing long-press or drag recognizer on the opening button.
+}
+- (void)cancelIdleTimer {
+    [self.idleTimer invalidate];
+    self.idleTimer = nil;
+}
+- (void)restartIdleTimer {
+    [self cancelIdleTimer];
+    if (!self.expanded || self.insideTouchCount || self.slider.tracking) return;
+    __weak MBEdgeController *weakSelf = self;
+    NSTimer *timer = [NSTimer timerWithTimeInterval:3.0 repeats:NO block:^(NSTimer *fired) {
+        MBEdgeController *strongSelf = weakSelf;
+        if (!strongSelf || strongSelf.idleTimer != fired) return;
+        strongSelf.idleTimer = nil;
+        if (strongSelf.insideTouchCount || strongSelf.slider.tracking) {
+            [strongSelf restartIdleTimer];
+            return;
+        }
+        [strongSelf closeEdge];
+    }];
+    self.idleTimer = timer;
+    [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+}
+- (void)closeEdge {
+    [self cancelIdleTimer];
+    if (!self.expanded) return;
+    self.expanded = NO;
+    self.volumeExpanded = NO;
+    [self animate];
+}
+- (void)attachActivityObserverToWindow:(UIWindow *)window {
+    if (self.activityObserver && self.activityObserver.view == window) return;
+    if (self.activityObserver) {
+        [self.activityObserver.view removeGestureRecognizer:self.activityObserver];
+        self.activityObserver = nil;
+    }
+    self.insideTouchCount = 0;
+    [self cancelIdleTimer];
+    if (!window) { [self closeEdge]; return; }
+    MBEdgeActivityObserver *observer = [[MBEdgeActivityObserver alloc] initWithTarget:nil action:NULL];
+    observer.edgeView = self.view;
+    observer.cancelsTouchesInView = NO;
+    observer.delaysTouchesBegan = NO;
+    observer.delaysTouchesEnded = NO;
+    __weak MBEdgeController *weakSelf = self;
+    observer.activityChanged = ^(NSUInteger insideCount, BOOL outsideBegan) {
+        MBEdgeController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.insideTouchCount = insideCount;
+        if (!strongSelf.expanded) return;
+        if (outsideBegan) { [strongSelf closeEdge]; return; }
+        if (insideCount) [strongSelf cancelIdleTimer];
+        else [strongSelf restartIdleTimer];
+    };
+    self.activityObserver = observer;
+    [window addGestureRecognizer:observer];
+    [self restartIdleTimer];
+}
+- (void)sliderTouchFinished:(UISlider *)slider {
+    // UIControl may finish tracking after the passive observer sees touch-up.
+    dispatch_async(dispatch_get_main_queue(), ^{ [self restartIdleTimer]; });
 }
 - (void)refreshGuestGain {
     NSString *guest = NSUserDefaults.lcGuestAppId.lowercaseString;
@@ -222,6 +333,7 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     // Never write the master gain or iOS output volume from Edge.
     MBApplyLiveGain();
     [self updateSpeakerIcon];
+    [self restartIdleTimer];
 }
 - (void)refreshApps {
     NSArray *all = MBEdgeApps();
@@ -331,11 +443,12 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     [UIView animateWithDuration:.42 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:0 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{ [self layoutEdge:YES]; } completion:nil];
 }
 - (void)toggle:(id)sender {
-    BOOL opening=!self.expanded;
-    self.expanded=!self.expanded; if (!self.expanded) self.volumeExpanded=NO;
     [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    if (self.expanded) { [self closeEdge]; return; }
+    self.expanded=YES;
     [self animate];
-    if (opening) {
+    [self restartIdleTimer];
+    {
         // Cached on attachment; refresh after the opening tap has completed.
         dispatch_async(dispatch_get_main_queue(), ^{
             [self refreshApps];
@@ -347,8 +460,10 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     if (!self.volumeExpanded) [self refreshGuestGain];
     self.volumeExpanded=!self.volumeExpanded;
     [self animate];
+    [self restartIdleTimer];
 }
 - (void)resync:(id)sender {
+    [self restartIdleTimer];
     if ([NSUserDefaults.lcGuestAppId.lowercaseString isEqualToString:@"com.google.ios.youtubemusic"] && MBMHEnabled()) {
         MBMHForceResync();
         [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium] impactOccurred];
@@ -360,7 +475,7 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 - (void)openApp:(UIButton *)sender {
     if ((NSUInteger)sender.tag>=self.apps.count) return;
     NSDictionary *a=self.apps[sender.tag];
-    self.expanded=NO; self.volumeExpanded=NO; [self animate];
+    [self closeEdge];
     if ([a[@"id"] isEqualToString:NSUserDefaults.lcGuestAppId.lowercaseString]) return;
     NSURLComponents *url=[NSURLComponents new]; url.scheme=@"bloomboxmedia"; url.host=@"livecontainer-launch";
     NSMutableArray *items=[NSMutableArray arrayWithObject:[NSURLQueryItem queryItemWithName:@"bundle-name" value:a[@"path"]]];
@@ -391,6 +506,7 @@ static UIWindow *MBEdgeGuestWindow(void) {
 }
 static void MBEnsureGuestEdge(void) {
     if (!MBEdgeEnabled()) {
+        [gMBEdgeController attachActivityObserverToWindow:nil];
         [gMBEdgeController.view removeFromSuperview];
         return;
     }
@@ -402,6 +518,7 @@ static void MBEnsureGuestEdge(void) {
         [view removeFromSuperview];
         view.frame=window.bounds;
         [window addSubview:view];
+        [gMBEdgeController attachActivityObserverToWindow:window];
         [gMBEdgeController refreshApps];
         [gMBEdgeController refreshGuestGain];
         [gMBEdgeController layoutEdge:NO];
