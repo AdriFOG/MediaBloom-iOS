@@ -201,6 +201,9 @@ struct MediaBloomAppearanceSheet: View {
     @StateObject private var haptics = MBHapticsDiagnostic.shared
     @AppStorage("MediaBloomSpotifyAVPlayersObservedV1", store: LCUtils.appGroupUserDefault)
     private var spotifyAVPlayersObserved = 0
+    @State private var spotifyActiveAVPlayers = 0
+    @State private var spotifyActiveAudioEngines = 0
+    @State private var spotifyAudioReport = ""
     @AppStorage("MediaBloomHapticsAutoISRCV1", store: LCUtils.appGroupUserDefault)
     private var automaticMusicHaptics = false
     @AppStorage("MediaBloomHapticsGuestOverlayV1", store: LCUtils.appGroupUserDefault)
@@ -211,6 +214,14 @@ struct MediaBloomAppearanceSheet: View {
             !(Locale.preferredLanguages.first ?? "es").lowercased().hasPrefix("es"))
     }
     private func t(_ es: String, _ en: String) -> String { english ? en : es }
+
+    private func refreshSpotifyAudioStatus() {
+        let shared = LCUtils.appGroupUserDefault
+        shared.synchronize()
+        spotifyActiveAVPlayers = shared.integer(forKey: "MediaBloomSpotifyActivePlayersV2")
+        spotifyActiveAudioEngines = shared.integer(forKey: "MediaBloomSpotifyActiveEnginesV2")
+        spotifyAudioReport = shared.string(forKey: "MediaBloomSpotifyAudioDetailsV2") ?? ""
+    }
 
     var body: some View {
         NavigationView {
@@ -234,9 +245,11 @@ struct MediaBloomAppearanceSheet: View {
             .onAppear {
                 hasWallpaper = MBWallpaperStore.load() != nil
                 haptics.beginObservation(english: english)
+                refreshSpotifyAudioStatus()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 haptics.refresh(english: english)
+                refreshSpotifyAudioStatus()
             }
             .sheet(isPresented: $showEdgeAppPicker) {
                 MBEdgeAppPicker(english: english)
@@ -428,10 +441,36 @@ struct MediaBloomAppearanceSheet: View {
                       : t("Registrar YouTube Music o Spotify", "Capture YouTube Music or Spotify"),
                       systemImage: haptics.captureActive ? "stop.circle.fill" : "record.circle")
             }
-            Text(t("Spotify beta: detección de canciones y audio AVFoundation, sin modificar Music Haptics. Reproductores AV detectados: \(spotifyAVPlayersObserved). Reabre Ajustes para actualizar el contador.",
-                   "Spotify beta: read-only song detection and AVFoundation audio, without changing Music Haptics. AV players detected: \(spotifyAVPlayersObserved). Reopen Settings to refresh this counter."))
-                .font(.caption)
-                .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Label(t("Spotify: diagnóstico de audio", "Spotify: audio diagnosis"),
+                      systemImage: "waveform.path.ecg")
+                    .font(.subheadline.weight(.semibold))
+                Text(t("Detectados: \(spotifyAVPlayersObserved) · Reproduciendo: \(spotifyActiveAVPlayers) · Motores de audio: \(spotifyActiveAudioEngines)",
+                       "Detected: \(spotifyAVPlayersObserved) · Playing: \(spotifyActiveAVPlayers) · Audio engines: \(spotifyActiveAudioEngines)"))
+                    .font(.caption.monospacedDigit())
+                Text(t("Detectar reproductores no garantiza que controlen la música. Probamos AVAudioEngine sin cambiar el volumen general del iPhone.",
+                       "Finding players doesn't prove they control the music. We also test AVAudioEngine without changing iPhone system volume."))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                if !spotifyAudioReport.isEmpty {
+                    Text(spotifyAudioReport)
+                        .font(.caption2.monospaced())
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        UIPasteboard.general.string = spotifyAudioReport
+                    } label: {
+                        Label(t("Copiar diagnóstico Spotify", "Copy Spotify diagnosis"),
+                              systemImage: "doc.on.doc")
+                    }
+                }
+                Button {
+                    refreshSpotifyAudioStatus()
+                } label: {
+                    Label(t("Actualizar diagnóstico", "Refresh diagnosis"),
+                          systemImage: "arrow.clockwise")
+                }
+            }
             Toggle(isOn: $automaticMusicHaptics) {
                 Label(t("Probar Music Haptics automático",
                         "Try automatic Apple Music Haptics"), systemImage: "waveform")
