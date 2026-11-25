@@ -540,10 +540,10 @@ struct MediaBloomReferenceView: View {
                     .font(.system(size: 11))
             }
             .padding(.horizontal, 6)
-            if model.visibleApps.isEmpty {
+            if homeTiles.isEmpty {
                 Spacer()
-                Text(model.apps.isEmpty
-                    ? t("Comparte apps de música o video desde BloomBox.", "Share music or video apps from BloomBox.")
+                Text(model.searchText.isEmpty
+                    ? t("Elige apps con el botón de cuadrícula.", "Choose apps with the grid button.")
                     : t("No encontramos esa app.", "No matching app."))
                     .font(.system(size: 12))
                     .multilineTextAlignment(.center)
@@ -552,11 +552,11 @@ struct MediaBloomReferenceView: View {
                 TabView(selection: $appPage) {
                     ForEach(0..<pageCount, id: \.self) { page in
                         let start = page * 6
-                        let end = min(start + 6, model.visibleApps.count)
-                        let portion = Array(model.visibleApps[start..<end])
+                        let end = min(start + 6, homeTiles.count)
+                        let portion = Array(homeTiles[start..<end])
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3),
                                   spacing: 11) {
-                            ForEach(portion) { app in appCell(app) }
+                            ForEach(portion) { item in homeAppCell(item) }
                         }
                         .frame(maxHeight: .infinity, alignment: .center)
                         .padding(.horizontal, 3)
@@ -579,6 +579,53 @@ struct MediaBloomReferenceView: View {
         .padding(.top, 13)
         .padding(.bottom, 10)
         .background(MBGlassPanel(tint: glassColor, opacity: glassOpacity, cornerRadius: 26))
+    }
+
+    @ViewBuilder
+    private func homeAppCell(_ item: MBMediaHomeTile) -> some View {
+        switch item {
+        case .automatic(let app):
+            appCell(app)
+        case .manual(let guest):
+            VStack(spacing: 4) {
+                Button { openManualApp(guest) } label: {
+                    Group {
+                        if let image = guest.appInfo.iconIsDarkIcon(false) {
+                            Image(uiImage: image).resizable().scaledToFill()
+                        } else {
+                            Image(systemName: "play.rectangle.fill")
+                                .font(.system(size: 23))
+                                .foregroundColor(theme.white)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(theme.ink)
+                        }
+                    }
+                    .frame(width: 50, height: 50)
+                    .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(t("Abrir ", "Open ") + guest.displayName)
+                Text(guest.displayName)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity)
+                Text("MediaBloom")
+                    .font(.system(size: 10))
+                    .foregroundColor(panelInk)
+                    .frame(height: 17)
+            }
+            .frame(maxWidth: .infinity)
+            .contextMenu {
+                Button { openManualApp(guest) } label: {
+                    Label(t("Abrir con MediaBloom", "Open with MediaBloom"),
+                          systemImage: "play.fill")
+                }
+                Button { showLibraryPicker = true } label: {
+                    Label(t("Administrar apps", "Manage apps"),
+                          systemImage: "square.grid.2x2")
+                }
+            }
+        }
     }
 
     private func appCell(_ app: MediaBloomHomeApp) -> some View {
@@ -640,7 +687,7 @@ struct MediaBloomReferenceView: View {
 
     // MARK: - Landscape's independent right-hand app list
     private func landscapeAppPanel() -> some View {
-        let chosen = model.visibleApps
+        let chosen = homeTiles
         return VStack(spacing: 0) {
             if chosen.isEmpty {
                 Text(t("No hay apps multimedia", "No media apps"))
@@ -653,8 +700,7 @@ struct MediaBloomReferenceView: View {
                         ForEach(chosen.indices, id: \.self) { index in
                             let app = chosen[index]
                             Button {
-                        model.select(app)
-                        model.onOpenApp(app.id)
+                        openHomeTile(app)
                     } label: {
                         HStack(spacing: 8) {
                             Text(String(format: "%02d", index + 1))
@@ -666,7 +712,7 @@ struct MediaBloomReferenceView: View {
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
                             Spacer(minLength: 0)
-                            Text(volumeText(for: app))
+                            Text(tileVolumeText(app))
                                 .font(.system(size: 11))
                                 .lineLimit(1)
                         }
@@ -678,7 +724,16 @@ struct MediaBloomReferenceView: View {
                                                  opacity: glassOpacity, cornerRadius: 25))
                             }
                             .buttonStyle(.plain)
-                            .contextMenu { appVolumeContextMenu(app) }
+                            .contextMenu {
+                                switch app {
+                                case .automatic(let real): appVolumeContextMenu(real)
+                                case .manual(let guest):
+                                    Button { openManualApp(guest) } label: {
+                                        Label(t("Abrir con MediaBloom", "Open with MediaBloom"),
+                                              systemImage: "play.fill")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
