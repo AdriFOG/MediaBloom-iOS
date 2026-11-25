@@ -44,7 +44,25 @@ edge_source = Path("../media-tools/controls/MediaBloomGuestEdge.inc").read_text(
 assert 'Spotify: sin ruta AV' in edge_source
 assert 'MBRefreshVolumeOverlayControls();' in tweak
 assert 'setOutputVolume:' not in tweak
-assert 'AVAudioEngine' not in tweak
+# Spotify v2 tests AVAudioEngine *only within its own guest process*.
+assert 'AVAudioEngine' in tweak
+assert 'startAndReturnError:' in tweak
+assert 'MBSpotifyRunningEngines(void)' in tweak
+assert 'MBSpotifyActiveAVPlayers(void)' in tweak
+assert 'return MBSpotifyActiveAVPlayers() > 0 || MBSpotifyRunningEngines() > 0;' in tweak
+assert 'MBSpotifySetMixerGain(id engine, float gain)' in tweak
+assert 'MBSpotifyMainMixer(id engine)' in tweak
+assert 'MediaBloomSpotifyAudioDiagnosticV2' in tweak
+assert 'MediaBloomSpotifyAudioDetailsV2' in tweak
+assert 'MediaBloomSpotifyActivePlayersV2' in tweak
+assert 'MediaBloomSpotifyActiveEnginesV2' in tweak
+assert 'MediaBloomSpotifyAudioDetailsV2' in (Path("../media-tools/ui/MediaBloomAppearance.swift").read_text())
+assert 'Copiar diagnóstico Spotify' in (Path("../media-tools/ui/MediaBloomAppearance.swift").read_text())
+# No audio capture, global hardware volume edits, or CoreAudio render hooks.
+assert 'AudioUnitRender' not in tweak
+assert 'AudioQueueSetParameter' not in tweak
+assert 'setOutputVolume:' in tweak
+assert 'MPVolumeView' not in tweak
 
 # More noticeable perceptual attenuation without ever amplifying.
 def gain(x):
