@@ -4,14 +4,17 @@
 // Render callback: zero allocations, zero ObjC, no locks or I/O.
 #import <AudioToolbox/AudioToolbox.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 
 typedef OSStatus (*MBSpotifyAUSetPropertyFn)(AudioUnit, AudioUnitPropertyID,
     AudioUnitScope, AudioUnitElement, const void *, UInt32);
 typedef OSStatus (*MBSpotifyAUStartFn)(AudioUnit);
 typedef OSStatus (*MBSpotifyAUGetPropertyFn)(AudioUnit, AudioUnitPropertyID,
     AudioUnitScope, AudioUnitElement, void *, UInt32 *);
-typedef void (*MBSpotifyMSHookFn)(void *, void *, void **);
+typedef AudioComponent (*MBSpotifyAUComponentFn)(AudioComponentInstance);
+typedef OSStatus (*MBSpotifyAUDescriptionFn)(AudioComponent, AudioComponentDescription *);
 
 typedef struct {
     AudioUnit unit;
@@ -19,6 +22,7 @@ typedef struct {
     AURenderCallback original;
     void *originalRefCon;
     _Atomic(int) pcmKind;  // 0 unknown, 1 float32, 2 signed int16, 3 float64
+    _Atomic(bool) ready;  // publish immutable context before other configuration hooks read it
 } MBSpotifyAUCallbackContext;
 
 #define MB_SPOTIFY_AU_CONTEXT_CAP 128u
@@ -34,6 +38,17 @@ static NSTimeInterval gMBSpotifyAULastStatusAt;
 static MBSpotifyAUSetPropertyFn gMBSpotifyAUOriginalSetProperty;
 static MBSpotifyAUStartFn gMBSpotifyAUOriginalStart;
 static MBSpotifyAUGetPropertyFn gMBSpotifyAUOriginalGetProperty;
+static MBSpotifyAUComponentFn gMBSpotifyAUGetComponent;
+static MBSpotifyAUDescriptionFn gMBSpotifyAUGetDescription;
+
+static BOOL MBSpotifyAUIsPlaybackOutput(AudioUnit unit) {
+    if (!unit || !gMBSpotifyAUGetComponent || !gMBSpotifyAUGetDescription) return NO;
+    AudioComponent component = gMBSpotifyAUGetComponent(unit);
+    AudioComponentDescription desc = {0};
+    return component && gMBSpotifyAUGetDescription(component, &desc) == noErr &&
+        desc.componentType == kAudioUnitType_Output &&
+        desc.componentSubType == kAudioUnitSubType_RemoteIO;
+}
 
 static int MBSpotifyAUFormatKind(const AudioStreamBasicDescription *format) {
     if (!format || format->mFormatID != kAudioFormatLinearPCM ||
@@ -43,13 +58,20 @@ static int MBSpotifyAUFormatKind(const AudioStreamBasicDescription *format) {
         (format->mFormatFlags & kAudioFormatFlagIsNonMixable)) return 0;
     // Only packed canonical PCM; compressed/planar byte layouts are never
     // guessed. Non-interleaved PCM still contains packed per-channel samples.
+    int kind = 0;
     if (format->mFormatFlags & kAudioFormatFlagIsFloat) {
-        return format->mBitsPerChannel == 32 ? 1 :
+        kind = format->mBitsPerChannel == 32 ? 1 :
                format->mBitsPerChannel == 64 ? 3 : 0;
+    } else if (format->mFormatFlags & kAudioFormatFlagIsSignedInteger) {
+        kind = format->mBitsPerChannel == 16 ? 2 : 0;
     }
-    if (format->mFormatFlags & kAudioFormatFlagIsSignedInteger)
-        return format->mBitsPerChannel == 16 ? 2 : 0;
-    return 0;
+    if (!kind || format->mChannelsPerFrame == 0 || format->mChannelsPerFrame > 32 ||
+        format->mFramesPerPacket != 1 || format->mBytesPerPacket != format->mBytesPerFrame)
+        return 0;
+    UInt32 width = kind == 3 ? 8 : kind == 2 ? 2 : 4;
+    UInt32 channels = (format->mFormatFlags & kAudioFormatFlagIsNonInterleaved)
+        ? 1 : format->mChannelsPerFrame;
+    return format->mBytesPerFrame == width * channels ? kind : 0;
 }
 
 static void MBSpotifyAUUpdateFormat(MBSpotifyAUCallbackContext *context,
@@ -66,14 +88,10 @@ static void MBSpotifyAUProbeFormat(MBSpotifyAUCallbackContext *context) {
     OSStatus status = gMBSpotifyAUOriginalGetProperty(context->unit,
         kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input,
         context->element, &format, &length);
-    if (status != noErr || length != sizeof(format)) {
-        length = sizeof(format);
-        status = gMBSpotifyAUOriginalGetProperty(context->unit,
-            kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output,
-            context->element, &format, &length);
-    }
     if (status == noErr && length == sizeof(format))
         MBSpotifyAUUpdateFormat(context, &format);
+    else
+        atomic_store_explicit(&context->pcmKind, 0, memory_order_relaxed);
 }
 
 static OSStatus MBSpotifyAURenderCallback(void *opaque,
@@ -83,23 +101,29 @@ static OSStatus MBSpotifyAURenderCallback(void *opaque,
     if (!context || !context->original) return -50;
     OSStatus status = context->original(context->originalRefCon,
                                         flags, stamp, bus, frames, data);
-    if (status != noErr || !data || frames == 0 ||
+    if (status != noErr || bus != 0 || !data || frames == 0 ||
         (flags && (*flags & kAudioUnitRenderAction_OutputIsSilence))) return status;
     atomic_fetch_add_explicit(&gMBSpotifyAURenderCount, 1, memory_order_relaxed);
 
     int kind = atomic_load_explicit(&context->pcmKind, memory_order_relaxed);
     if (!kind || data->mNumberBuffers == 0 || data->mNumberBuffers > 8)
         return status;
+    UInt32 width = kind == 3 ? 8 : kind == 2 ? 2 : 4;
+    // Validate the complete list before modifying anything. mDataByteSize may
+    // describe capacity rather than the actual frame count; never touch its tail.
+    for (UInt32 i = 0; i < data->mNumberBuffers; ++i) {
+        const AudioBuffer *buffer = &data->mBuffers[i];
+        uint64_t bytes = (uint64_t)frames * buffer->mNumberChannels * width;
+        if (!buffer->mData || !buffer->mNumberChannels || buffer->mNumberChannels > 32 ||
+            !bytes || bytes > 262144 || bytes > buffer->mDataByteSize ||
+            ((uintptr_t)buffer->mData % width) != 0) return status;
+    }
     float gain = atomic_load_explicit(&gMBSpotifyAUGain, memory_order_relaxed);
     BOOL hasSignal = NO;
     BOOL attenuated = NO;
     for (UInt32 bufferIndex = 0; bufferIndex < data->mNumberBuffers; ++bufferIndex) {
         AudioBuffer *buffer = &data->mBuffers[bufferIndex];
-        UInt32 width = kind == 3 ? 8 : kind == 2 ? 2 : 4;
-        UInt32 bytes = buffer->mDataByteSize;
-        if (!buffer->mData || bytes == 0 || bytes > 262144 ||
-            (bytes % width) != 0) continue;
-        size_t samples = bytes / width;
+        size_t samples = (size_t)frames * buffer->mNumberChannels;
         if (kind == 1) {
             float *pcm = (float *)buffer->mData;
             for (size_t i = 0; i < samples; ++i) {
@@ -146,10 +170,14 @@ static OSStatus MBSpotifyAUHookSetProperty(AudioUnit unit,
         AudioUnitPropertyID property, AudioUnitScope scope,
         AudioUnitElement element, const void *value, UInt32 size) {
     if (!gMBSpotifyAUOriginalSetProperty) return -50;
+    // Only the RemoteIO playback input bus (0), never recording input or
+    // intermediate processing units that may be mixed again downstream.
     if (property == kAudioUnitProperty_SetRenderCallback &&
-        value && size == sizeof(AURenderCallbackStruct)) {
+        scope == kAudioUnitScope_Input && element == 0 &&
+        value && size == sizeof(AURenderCallbackStruct) &&
+        MBSpotifyAUIsPlaybackOutput(unit)) {
         const AURenderCallbackStruct *source = (const AURenderCallbackStruct *)value;
-        if (source->inputProc) {
+        if (source->inputProc && source->inputProc != MBSpotifyAURenderCallback) {
             unsigned idx = atomic_fetch_add_explicit(&gMBSpotifyAUContextCount,
                                                        1, memory_order_relaxed);
             if (idx < MB_SPOTIFY_AU_CONTEXT_CAP) {
@@ -159,6 +187,7 @@ static OSStatus MBSpotifyAUHookSetProperty(AudioUnit unit,
                 ctx->original = source->inputProc;
                 ctx->originalRefCon = source->inputProcRefCon;
                 MBSpotifyAUProbeFormat(ctx);
+                atomic_store_explicit(&ctx->ready, true, memory_order_release);
                 AURenderCallbackStruct replacement = {
                     .inputProc = MBSpotifyAURenderCallback,
                     .inputProcRefCon = ctx
@@ -173,13 +202,15 @@ static OSStatus MBSpotifyAUHookSetProperty(AudioUnit unit,
     OSStatus status = gMBSpotifyAUOriginalSetProperty(unit, property,
                                                        scope, element, value, size);
     if (status == noErr && property == kAudioUnitProperty_StreamFormat &&
+        scope == kAudioUnitScope_Input && element == 0 &&
         value && size == sizeof(AudioStreamBasicDescription)) {
         unsigned used = atomic_load_explicit(&gMBSpotifyAUContextCount,
                                               memory_order_relaxed);
         if (used > MB_SPOTIFY_AU_CONTEXT_CAP) used = MB_SPOTIFY_AU_CONTEXT_CAP;
         for (unsigned i = 0; i < used; ++i) {
             MBSpotifyAUCallbackContext *ctx = &gMBSpotifyAUContexts[i];
-            if (ctx->unit == unit && ctx->element == element)
+            if (atomic_load_explicit(&ctx->ready, memory_order_acquire) &&
+                ctx->unit == unit && ctx->element == element)
                 MBSpotifyAUUpdateFormat(ctx,
                     (const AudioStreamBasicDescription *)value);
         }
@@ -189,6 +220,13 @@ static OSStatus MBSpotifyAUHookSetProperty(AudioUnit unit,
 
 static OSStatus MBSpotifyAUHookStart(AudioUnit unit) {
     if (!gMBSpotifyAUOriginalStart) return -50;
+    unsigned used = atomic_load_explicit(&gMBSpotifyAUContextCount, memory_order_relaxed);
+    if (used > MB_SPOTIFY_AU_CONTEXT_CAP) used = MB_SPOTIFY_AU_CONTEXT_CAP;
+    for (unsigned i = 0; i < used; ++i) {
+        MBSpotifyAUCallbackContext *ctx = &gMBSpotifyAUContexts[i];
+        if (atomic_load_explicit(&ctx->ready, memory_order_acquire) && ctx->unit == unit)
+            MBSpotifyAUProbeFormat(ctx);
+    }
     OSStatus result = gMBSpotifyAUOriginalStart(unit);
     if (result == noErr)
         atomic_fetch_add_explicit(&gMBSpotifyAUStartCount, 1,
@@ -226,6 +264,13 @@ static void MBSpotifyAUInstallHooks(void) {
     void *start = dlsym(toolbox, "AudioOutputUnitStart");
     gMBSpotifyAUOriginalGetProperty =
         (MBSpotifyAUGetPropertyFn)dlsym(toolbox, "AudioUnitGetProperty");
+    gMBSpotifyAUGetComponent = (MBSpotifyAUComponentFn)dlsym(toolbox, "AudioComponentInstanceGetComponent");
+    gMBSpotifyAUGetDescription = (MBSpotifyAUDescriptionFn)dlsym(toolbox, "AudioComponentGetDescription");
+    if (!gMBSpotifyAUGetComponent || !gMBSpotifyAUGetDescription ||
+        !gMBSpotifyAUOriginalGetProperty) {
+        NSLog(@"[BloomAudio] Spotify AudioUnit probe skipped: output or format validation unavailable");
+        return;
+    }
     if (set) hook(set, (void *)MBSpotifyAUHookSetProperty,
                   (void **)&gMBSpotifyAUOriginalSetProperty);
     if (start) hook(start, (void *)MBSpotifyAUHookStart,
