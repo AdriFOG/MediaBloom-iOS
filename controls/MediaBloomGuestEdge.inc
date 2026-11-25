@@ -122,6 +122,7 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 @property(nonatomic,strong) UILabel *volumeUnavailable;
 @property(nonatomic,strong) NSMutableArray<UIButton *> *shortcuts;
 @property(nonatomic,strong) NSArray<NSDictionary *> *apps;
+@property(nonatomic,copy) NSArray<NSString *> *selectionSnapshot;
 @property(nonatomic,assign) BOOL expanded;
 @property(nonatomic,assign) BOOL volumeExpanded;
 @property(nonatomic,assign) BOOL right;
@@ -295,7 +296,29 @@ static BOOL MBEdgeLocalGainAvailable(void) {
 }
 - (void)refreshApps {
     NSArray *all = MBEdgeApps();
-    NSArray *next = [all subarrayWithRange:NSMakeRange(0,MIN((NSUInteger)4,all.count))];
+    id saved = [NSUserDefaults.lcSharedDefaults objectForKey:@"MediaBloomEdgeAppIDsV1"];
+    NSArray *selection = [saved isKindOfClass:NSArray.class] ? saved : nil;
+    self.selectionSnapshot = selection;
+    NSArray *next;
+    if (selection) {
+        // Empty selection means no app shortcuts, not auto-fill.
+        NSMutableArray<NSDictionary *> *ordered = [NSMutableArray arrayWithCapacity:4];
+        for (id identifier in selection) {
+            if (![identifier isKindOfClass:NSString.class]) continue;
+            for (NSDictionary *app in all) {
+                if ([app[@"id"] isEqualToString:identifier] &&
+                    ![ordered containsObject:app]) {
+                    [ordered addObject:app];
+                    break;
+                }
+            }
+            if (ordered.count == 4) break;
+        }
+        next = ordered;
+    } else {
+        // Keep the first-four behavior until the user customizes it.
+        next = [all subarrayWithRange:NSMakeRange(0,MIN((NSUInteger)4,all.count))];
+    }
     if ([next isEqualToArray:self.apps]) return;
     for (UIButton *b in self.shortcuts) [b removeFromSuperview];
     [self.shortcuts removeAllObjects];
@@ -580,6 +603,16 @@ static void MBEnsureGuestEdge(void) {
         [gMBEdgeController layoutEdge:NO];
     } else if (!CGRectEqualToRect(view.frame,window.bounds)) {
         view.frame=window.bounds;
+        [gMBEdgeController layoutEdge:NO];
+    }
+    // Honor new app selections without restarting the guest or listing apps
+    // every frame. This checks a tiny defaults array on the existing tick.
+    id configured = [NSUserDefaults.lcSharedDefaults objectForKey:@"MediaBloomEdgeAppIDsV1"];
+    NSArray *selection = [configured isKindOfClass:NSArray.class] ? configured : nil;
+    if (!gMBEdgeController.expanded && !gMBEdgeController.controlIsTouching &&
+        (selection || gMBEdgeController.selectionSnapshot) &&
+        ![selection isEqualToArray:gMBEdgeController.selectionSnapshot]) {
+        [gMBEdgeController refreshApps];
         [gMBEdgeController layoutEdge:NO];
     }
     // Media guests can add sibling views over Edge after playback starts.
