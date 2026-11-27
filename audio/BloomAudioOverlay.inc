@@ -58,7 +58,8 @@ static void MBApplyLiveGain(void);
     self.guestLabel = [[UILabel alloc] init];
     self.guestLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
     self.guestLabel.textColor = UIColor.whiteColor;
-    self.guestLabel.text = [gMBAudioGuest containsString:@"music"] ? @"YouTube Music" : @"YouTube";
+    self.guestLabel.text = MBIsSpotifyGuest(gMBAudioGuest) ? @"Spotify · experimental" :
+        ([gMBAudioGuest containsString:@"music"] ? @"YouTube Music" : @"YouTube");
     [self.panel addSubview:self.guestLabel];
 
     self.percentLabel = [[UILabel alloc] init];
@@ -123,8 +124,19 @@ static void MBApplyLiveGain(void);
 }
 
 - (void)updateLabels {
+    BOOL spotify = MBIsSpotifyGuest(gMBAudioGuest);
+    BOOL controllable = !spotify || MBSpotifyAudioAvailable();
+    self.gainSlider.enabled = controllable;
+    self.muteButton.enabled = controllable;
+    if (spotify) {
+        self.guestLabel.text = controllable
+            ? @"Spotify · AV beta"
+            : @"Spotify · sin ruta AV";
+    }
     float gain = self.gainSlider.value;
-    self.percentLabel.text = [NSString stringWithFormat:@"%d%%", (int)lroundf(gain * 100)];
+    self.percentLabel.text = controllable
+        ? [NSString stringWithFormat:@"%d%%", (int)lroundf(gain * 100)]
+        : @"—";
     NSString *iconName = gain < 0.001f ? @"speaker.slash.fill" : @"speaker.wave.2.fill";
     [self.bubble setImage:[UIImage systemImageNamed:iconName] forState:UIControlStateNormal];
     [self.muteButton setImage:[UIImage systemImageNamed:iconName] forState:UIControlStateNormal];
@@ -132,6 +144,7 @@ static void MBApplyLiveGain(void);
 }
 
 - (void)storeValue:(float)value {
+    if (MBIsSpotifyGuest(gMBAudioGuest) && !MBSpotifyAudioAvailable()) return;
     float normalized = MBClampVolume(value);
     self.gainSlider.value = normalized;
     if (normalized > 0.001f) self.previousNonzeroLevel = normalized;
@@ -196,6 +209,12 @@ static void MBApplyLiveGain(void);
 @end
 
 static MBVolumeOverlayController *gMBVolumeController;
+
+static void MBRefreshVolumeOverlayControls(void) {
+    if (gMBVolumeController && gMBVolumeExpanded) {
+        [gMBVolumeController updateLabels];
+    }
+}
 
 static UIWindowScene *MBActiveVolumeScene(void) {
     if (@available(iOS 13.0, *)) {

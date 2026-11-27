@@ -87,7 +87,8 @@ def apply():
     old_check = '''static BOOL MBIsSupportedGuest(NSString *identifier) {
     NSString *name = identifier.lowercaseString;
     return [name isEqualToString:@"com.google.ios.youtube"] ||
-           [name isEqualToString:@"com.google.ios.youtubemusic"];
+           [name isEqualToString:@"com.google.ios.youtubemusic"] ||
+           MBIsSpotifyGuest(name);
 }'''
     ids_objc = ',\n        '.join('@"' + value + '"' for value in MEDIA_IDS)
     new_check = '''static BOOL MBIsSupportedGuest(NSString *identifier) {
@@ -137,7 +138,8 @@ def apply():
     audio = replace_once(audio, old_overlay,
         '''    // Floating slider edits this guest only; general master stays unchanged.
 ''', 'floating in-guest slider')
-    old_label = '''    self.guestLabel.text = [gMBAudioGuest containsString:@"music"] ? @"YouTube Music" : @"YouTube";'''
+    old_label = '''    self.guestLabel.text = MBIsSpotifyGuest(gMBAudioGuest) ? @"Spotify · experimental" :
+        ([gMBAudioGuest containsString:@"music"] ? @"YouTube Music" : @"YouTube");'''
     new_label = '''    NSDictionary<NSString *, NSString *> *names = @{
         @"com.google.ios.youtube": @"YouTube", @"com.google.ios.youtubemusic": @"YouTube Music",
         @"com.spotify.client": @"Spotify", @"com.netflix.netflix": @"Netflix",
@@ -148,7 +150,9 @@ def apply():
         @"org.videolan.vlc-ios": @"VLC", @"com.plexapp.plex": @"Plex",
         @"com.firecore.infuse": @"Infuse", @"com.disney.disneyplus": @"Disney+"
     };
-    self.guestLabel.text = names[gMBAudioGuest] ?: gMBAudioGuest.lastPathComponent;'''
+    self.guestLabel.text = MBIsSpotifyGuest(gMBAudioGuest)
+        ? @"Spotify · experimental"
+        : (names[gMBAudioGuest] ?: gMBAudioGuest.lastPathComponent);'''
     audio = replace_once(audio, old_label, new_label, 'guest bubble display name')
     RUNTIME.write_text(audio, encoding='utf-8')
     print('PASS: MediaBloom appearance, master x per-guest audio and known media whitelist installed')

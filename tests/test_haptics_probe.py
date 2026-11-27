@@ -187,4 +187,16 @@ assert "MBEdgeAppPicker(english: english)" in appearance
 assert "LCSharedUtils.appGroupPath()" in appearance
 assert "selected.count < 4" in appearance and "selected.move(fromOffsets:" in appearance
 assert "BloomBoxMediaTagV1." in appearance
+# Spotify Music Haptics is independent, explicitly opt-in, and does not hook audio.
+assert 'MBIsSpotifyGuest(guest)' in guest_probe
+assert 'spotify ? 0.75 : 2.0' in guest_probe
+assert 'MediaBloomSpotifyHapticsV1' in guest_probe
+assert 'MBGuestAutoHapticsWanted()' in guest_probe
+assert 'if (MBGuestAutoHapticsWanted()) MBMHInspectCurrentSong' in guest_probe
+assert 'return MBGuestAutoHapticsWanted();' in guest_official
+assert 'private var spotifyHaptics = false' in appearance
+assert 'Spotify Now Playing probe loaded' in guest_probe
+assert 'Registrar YouTube Music o Spotify' in appearance
+assert 'MediaBloomSpotifyAVPlayersObservedV1' in appearance
+
 print("PASS: honest native Music Haptics readiness, tactile test and existing media isolation")

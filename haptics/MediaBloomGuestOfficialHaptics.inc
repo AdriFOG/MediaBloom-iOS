@@ -35,8 +35,7 @@ static void MBMHDeezerFallback(NSString *signature, NSString *reason);
 static BOOL MBMHEnabled(void) {
     NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
     [shared synchronize];
-    return [shared boolForKey:kMBGuestProbeEnabled] &&
-           [shared boolForKey:kMBMHEnabledKey];
+    return MBGuestAutoHapticsWanted();
 }
 
 // Shared, persistent *last observed* status; the user closes the guest to
@@ -675,7 +674,7 @@ static void MBMHInspectCurrentSong(NSDictionary *info, NSString *title,
     gMBMHDeezerAttemptedSignature = nil;
     MBMHSetStatus(@"searching", @"Identifying exact recording and ISRC", signature);
     if (existingISRC.length) {
-        MBGuestAppendHapticEvent(@"YouTube Music supplied an ISRC; no override necessary");
+        MBGuestAppendHapticEvent(@"Player supplied an ISRC; no override necessary");
         MBMHSetStatus(@"ready", @"Player supplied its own ISRC", signature);
         return;
     }

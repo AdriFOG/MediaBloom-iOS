@@ -1,4 +1,4 @@
-// Opt-in, read-only YouTube Music guest telemetry for MediaBloom only.
+// Opt-in, read-only YouTube Music and Spotify guest telemetry for MediaBloom.
 // Injected into the existing TweakLoader after BloomAudio. No player mutation,
 // audio recording, network requests, private Google method hooks or ISRC spoofing.
 #import <Foundation/Foundation.h>
@@ -48,10 +48,25 @@ static void MBGuestAppendHapticEvent(NSString *event) {
     [shared synchronize];
 }
 
+static BOOL MBGuestSpotifyHapticsEnabled(void) {
+    return MBIsSpotifyGuest(NSUserDefaults.lcGuestAppId) &&
+        [NSUserDefaults.lcSharedDefaults boolForKey:@"MediaBloomSpotifyHapticsV1"];
+}
+
+static BOOL MBGuestCaptureWanted(void) {
+    return [NSUserDefaults.lcSharedDefaults boolForKey:kMBGuestProbeEnabled] || MBGuestSpotifyHapticsEnabled();
+}
+
+static BOOL MBGuestAutoHapticsWanted(void) {
+    if (MBIsSpotifyGuest(NSUserDefaults.lcGuestAppId)) return MBGuestSpotifyHapticsEnabled();
+    NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
+    return [shared boolForKey:kMBGuestProbeEnabled] && [shared boolForKey:@"MediaBloomHapticsAutoISRCV1"];
+}
+
 static void MBGuestInspectNowPlaying(void) {
     NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
     [shared synchronize];
-    if (![shared boolForKey:kMBGuestProbeEnabled]) return;
+    if (!MBGuestCaptureWanted()) return;
 
     gMBGuestSampleCount++;
     Class centerClass = NSClassFromString(@"MPNowPlayingInfoCenter");
@@ -89,7 +104,7 @@ static void MBGuestInspectNowPlaying(void) {
         }
     }
     // The official experiment only runs when explicitly opted in.
-    MBMHInspectCurrentSong(info, title, artist, isrc);
+    if (MBGuestAutoHapticsWanted()) MBMHInspectCurrentSong(info, title, artist, isrc);
 
     // Heartbeat proves guest code executed; absence of metadata does not mean
     // the player stopped or that a song has no haptic track.
@@ -101,28 +116,30 @@ static void MBGuestInspectNowPlaying(void) {
 static void MBInstallGuestHapticsProbe(void) {
     if (!MBIsMediaHost()) return; // Never activate in original BloomBox.
     NSString *guest = NSUserDefaults.lcGuestAppId.lowercaseString;
-    if (![guest isEqualToString:@"com.google.ios.youtubemusic"]) return;
+    BOOL spotify = MBIsSpotifyGuest(guest);
+    if (!spotify && ![guest isEqualToString:@"com.google.ios.youtubemusic"]) return;
 
     NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
     [shared synchronize];
-    if (![shared boolForKey:kMBGuestProbeEnabled]) return;
+    if (!MBGuestCaptureWanted()) return;
 
     dispatch_async(dispatch_get_main_queue(), ^{
         dlopen("/System/Library/Frameworks/MediaPlayer.framework/MediaPlayer", RTLD_LAZY);
         gMBGuestSampleCount = 0;
         gMBGuestProbeReportedEmpty = NO;
         gMBGuestSongSignature = nil;
-        MBGuestAppendHapticEvent(@"Guest probe loaded in YouTube Music");
+        MBGuestAppendHapticEvent(spotify
+            ? @"Spotify Now Playing probe loaded (Music Haptics separately opt-in)"
+            : @"Guest probe loaded in YouTube Music");
         MBMHStartGuestObserver();
         MBGuestInspectNowPlaying();
         MBMHUpdateGuestOverlay();
         // Music Haptics should not wait for the 2-second diagnostics heartbeat.
         // Fast tick only reads in-process metadata; it never captures audio.
-        if ([shared boolForKey:@"MediaBloomHapticsAutoISRCV1"]) {
+        if (MBGuestAutoHapticsWanted()) {
             MBGuestAppendHapticEvent(@"Fast Music Haptics sync enabled (0.5s checks)");
             [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *timer) {
-                if (![shared boolForKey:kMBGuestProbeEnabled] ||
-                    ![shared boolForKey:@"MediaBloomHapticsAutoISRCV1"]) {
+                if (!MBGuestAutoHapticsWanted()) {
                     [timer invalidate];
                     return;
                 }
@@ -130,9 +147,9 @@ static void MBInstallGuestHapticsProbe(void) {
                 MBMHUpdateGuestOverlay();
             }];
         }
-        [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:YES block:^(NSTimer *timer) {
+        [NSTimer scheduledTimerWithTimeInterval:spotify ? 0.75 : 2.0 repeats:YES block:^(NSTimer *timer) {
             [shared synchronize];
-            if (![shared boolForKey:kMBGuestProbeEnabled]) {
+            if (!MBGuestCaptureWanted()) {
                 [timer invalidate];
                 return;
             }

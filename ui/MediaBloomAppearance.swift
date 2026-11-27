@@ -199,8 +199,24 @@ struct MediaBloomAppearanceSheet: View {
     @State private var hasWallpaper = false
     @State private var imageError = false
     @StateObject private var haptics = MBHapticsDiagnostic.shared
+    @AppStorage("MediaBloomSpotifyAVPlayersObservedV1", store: LCUtils.appGroupUserDefault)
+    private var spotifyAVPlayersObserved = 0
+    @State private var spotifyActiveAVPlayers = 0
+    @State private var spotifyActiveAudioEngines = 0
+    @State private var spotifyAudioReport = ""
+    @State private var spotifyAudioUnitReport = ""
     @AppStorage("MediaBloomHapticsAutoISRCV1", store: LCUtils.appGroupUserDefault)
     private var automaticMusicHaptics = false
+    @AppStorage("MediaBloomSpotifyHapticsV1", store: LCUtils.appGroupUserDefault)
+    private var spotifyHaptics = false
+    @AppStorage("MediaBloomSpotifyAVVolumeV1", store: LCUtils.appGroupUserDefault)
+    private var spotifyAVVolume = false
+    @AppStorage("MediaBloomInspectorV1", store: LCUtils.appGroupUserDefault)
+    private var inspectorEnabled = false
+    @AppStorage("MediaBloomInspectorTraceV1", store: LCUtils.appGroupUserDefault)
+    private var inspectorTrace = false
+    @State private var inspectorLog = ""
+    @State private var exportInspector = false
     @AppStorage("MediaBloomHapticsGuestOverlayV1", store: LCUtils.appGroupUserDefault)
     private var showHapticsInPlayer = true
 
@@ -210,6 +226,16 @@ struct MediaBloomAppearanceSheet: View {
     }
     private func t(_ es: String, _ en: String) -> String { english ? en : es }
 
+    private func refreshSpotifyAudioStatus() {
+        let shared = LCUtils.appGroupUserDefault
+        shared.synchronize()
+        spotifyActiveAVPlayers = shared.integer(forKey: "MediaBloomSpotifyActivePlayersV2")
+        spotifyActiveAudioEngines = shared.integer(forKey: "MediaBloomSpotifyActiveEnginesV2")
+        spotifyAudioReport = shared.string(forKey: "MediaBloomSpotifyAudioDetailsV2") ?? ""
+        spotifyAudioUnitReport = ""
+        inspectorLog = shared.string(forKey: "MediaBloomInspectorLogV1") ?? ""
+    }
+
     var body: some View {
         NavigationView {
             Form {
@@ -218,6 +244,7 @@ struct MediaBloomAppearanceSheet: View {
                 glassSection
                 mediaTagsSection
                 audioSection
+                tweaksSection
                 edgeSection
                 hapticsSection
                 advancedSection
@@ -232,10 +259,14 @@ struct MediaBloomAppearanceSheet: View {
             .onAppear {
                 hasWallpaper = MBWallpaperStore.load() != nil
                 haptics.beginObservation(english: english)
+                refreshSpotifyAudioStatus()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 haptics.refresh(english: english)
+                refreshSpotifyAudioStatus()
             }
+            .fileExporter(isPresented: $exportInspector, document: MBInspectorLogDocument(content: inspectorLog),
+                          contentType: MBInspectorLogDocument.logType, defaultFilename: "BloomAudio-Inspector.log") { _ in }
             .sheet(isPresented: $showEdgeAppPicker) {
                 MBEdgeAppPicker(english: english)
             }
@@ -382,6 +413,43 @@ struct MediaBloomAppearanceSheet: View {
         }
     }
 
+    private var tweaksSection: some View {
+        Section(header: Text(t("Tweaks experimentales", "Experimental tweaks"))) {
+            Toggle(t("Music Haptics · Spotify", "Music Haptics · Spotify"), isOn: $spotifyHaptics)
+            Toggle(t("Volumen AV · Spotify (experimental)", "AV volume · Spotify (experimental)"), isOn: $spotifyAVVolume)
+                .disabled(!audioEnabled)
+            Toggle("BloomAudio Inspector v2", isOn: $inspectorEnabled)
+            Toggle(t("Rastreo de funciones (experimental)", "Function tracing (experimental)"), isOn: $inspectorTrace)
+                .disabled(!inspectorEnabled)
+            Text(t("Cierra y vuelve a abrir el reproductor. En Spotify, el inspector v2 consulta el probe compatible sin interceptar funciones. El rastreo avanzado solo afecta a otros reproductores y puede causar cierres. Volumen AV requiere BloomAudio y no garantiza controlar Spotify.",
+                   "Reopen the player. In Spotify, Inspector v2 reads a compatible probe without rebinding functions. Advanced tracing only affects other players and may crash. AV volume requires BloomAudio and may not control Spotify."))
+                .font(.footnote).foregroundColor(.secondary)
+            if inspectorEnabled {
+                Text(t("Spotify: si el registro muestra diagnostics_preference=0, actívalo en los ajustes del mod de Spotify y vuelve a abrirlo. El inspector no activa esa opción por sí solo.",
+                       "Spotify: if the log shows diagnostics_preference=0, enable Diagnostics in Spotify's mod settings and reopen the player. Inspector does not enable it automatically."))
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            Button { refreshSpotifyAudioStatus() } label: {
+                Label(t("Actualizar registro", "Refresh log"), systemImage: "arrow.clockwise")
+            }
+            if !inspectorLog.isEmpty {
+                Text(inspectorLog.components(separatedBy: "\n").suffix(6).joined(separator: "\n"))
+                    .font(.caption2.monospaced()).textSelection(.enabled)
+                Button { UIPasteboard.general.string = inspectorLog } label: {
+                    Label(t("Copiar registro completo", "Copy full log"), systemImage: "doc.on.doc")
+                }
+                Button { exportInspector = true } label: {
+                    Label(t("Exportar archivo .log", "Export .log file"), systemImage: "square.and.arrow.up")
+                }
+            }
+            Button(role: .destructive) {
+                LCUtils.appGroupUserDefault.removeObject(forKey: "MediaBloomInspectorLogV1")
+                LCUtils.appGroupUserDefault.synchronize()
+                inspectorLog = ""
+            } label: { Label(t("Borrar registro", "Clear log"), systemImage: "trash") }
+        }
+    }
+
     private var hapticsSection: some View {
         Section(header: Text(t("Música háptica · Prueba", "Music Haptics · Test"))) {
             HStack(spacing: 10) {
@@ -423,8 +491,45 @@ struct MediaBloomAppearanceSheet: View {
             } label: {
                 Label(haptics.captureActive
                       ? t("Detener registro", "Stop capture")
-                      : t("Iniciar registro para YouTube Music", "Start YouTube Music capture"),
+                      : t("Registrar YouTube Music o Spotify", "Capture YouTube Music or Spotify"),
                       systemImage: haptics.captureActive ? "stop.circle.fill" : "record.circle")
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Label(t("Spotify: diagnóstico de audio", "Spotify: audio diagnosis"),
+                      systemImage: "waveform.path.ecg")
+                    .font(.subheadline.weight(.semibold))
+                Text(t("Detectados: \(spotifyAVPlayersObserved) · Reproduciendo: \(spotifyActiveAVPlayers) · Motores de audio: \(spotifyActiveAudioEngines)",
+                       "Detected: \(spotifyAVPlayersObserved) · Playing: \(spotifyActiveAVPlayers) · Audio engines: \(spotifyActiveAudioEngines)"))
+                    .font(.caption.monospacedDigit())
+                Text(t("Detectar reproductores no garantiza que controlen la música. Probamos AVAudioEngine sin cambiar el volumen general del iPhone.",
+                       "Finding players doesn't prove they control the music. We also test AVAudioEngine without changing iPhone system volume."))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                if !spotifyAudioUnitReport.isEmpty {
+                    Text(spotifyAudioUnitReport)
+                        .font(.caption2.monospaced())
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !spotifyAudioReport.isEmpty {
+                    Text(spotifyAudioReport)
+                        .font(.caption2.monospaced())
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        UIPasteboard.general.string = [spotifyAudioReport,
+                            spotifyAudioUnitReport].filter { !$0.isEmpty }
+                                .joined(separator: "\n")
+                    } label: {
+                        Label(t("Copiar diagnóstico Spotify", "Copy Spotify diagnosis"),
+                              systemImage: "doc.on.doc")
+                    }
+                }
+                Button {
+                    refreshSpotifyAudioStatus()
+                } label: {
+                    Label(t("Actualizar diagnóstico", "Refresh diagnosis"),
+                          systemImage: "arrow.clockwise")
+                }
             }
             Toggle(isOn: $automaticMusicHaptics) {
                 Label(t("Probar Music Haptics automático",
@@ -484,7 +589,8 @@ struct MediaBloomAppearanceSheet: View {
                 }
             }
             if haptics.guestSamples > 0 || !haptics.guestEvents.isEmpty {
-                Label(t("Diagnóstico desde YouTube Music", "YouTube Music guest diagnostic"),
+                Label(t("Diagnóstico de YouTube Music / Spotify",
+                        "YouTube Music / Spotify diagnostic"),
                       systemImage: "waveform.path.ecg")
                     .font(.subheadline.weight(.semibold))
                 Text(t("Lecturas dentro del reproductor: ", "Samples inside player: ")
@@ -502,8 +608,8 @@ struct MediaBloomAppearanceSheet: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text(t("Sin lecturas desde YouTube Music. Inicia el registro y abre el reproductor desde MediaBloom.",
-                       "No in-guest data yet. Start capture, then open YouTube Music from MediaBloom."))
+                Text(t("Sin lecturas todavía. Inicia el registro y abre YouTube Music o Spotify desde MediaBloom.",
+                       "No data yet. Start capture, then open YouTube Music or Spotify from MediaBloom."))
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
@@ -927,5 +1033,19 @@ private struct MBEdgeAppPicker: View {
         }
         .navigationViewStyle(.stack)
         .preferredColorScheme(.light)
+    }
+}
+
+
+private struct MBInspectorLogDocument: FileDocument {
+    static var logType: UTType { UTType(filenameExtension: "log") ?? .plainText }
+    static var readableContentTypes: [UTType] { [logType, .plainText] }
+    var content: String
+    init(content: String) { self.content = content }
+    init(configuration: ReadConfiguration) throws {
+        content = String(decoding: configuration.file.regularFileContents ?? Data(), as: UTF8.self)
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: Data(content.utf8))
     }
 }

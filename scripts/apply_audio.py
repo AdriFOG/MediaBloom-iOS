@@ -9,6 +9,8 @@ from pathlib import Path
 ROOT = Path(".")
 HOOK = (Path("../media-tools/audio/BloomAudioRuntime.inc").read_text()
         + "\n"
+        + Path("../media-tools/audio/MediaBloomSpotifyAudioUnit.inc").read_text()
+        + "\n"
         + Path("../media-tools/audio/BloomAudioOverlay.inc").read_text())
 LOADER = ROOT / "TweakLoader/TweakLoader.m"
 SWIFT = ROOT / "LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift"
@@ -37,6 +39,9 @@ def main():
         '    MBInstallAudioHooks();\n',
         "TweakLoader injection call",
     )
+    loader = replace_once(loader, "    MBInstallAudioHooks();\n",
+                          "    MBInstallAudioHooks();\n    MBInstallAudioInspector();\n",
+                          "Independent inspector entry")
     LOADER.write_text(loader)
 
     swift = SWIFT.read_text()
@@ -71,8 +76,8 @@ def main():
         '                        }\n'
         '                        .tint(.purple)\n'
         '                        Text(english\n'
-        '                             ? "Separate volume for YouTube and YouTube Music. Reopen the app after enabling, then use the floating speaker button during playback."\n'
-        '                             : "Volumen independiente para YouTube y YouTube Music. Actívalo, vuelve a abrir la app y usa el botón flotante del altavoz mientras reproduce.")\n'
+        '                             ? "Separate volume for YouTube and YouTube Music. Spotify support is an AVFoundation-only beta: controls are available only if a real compatible player is detected. Reopen the app after enabling."\n'
+        '                             : "Volumen independiente para YouTube y YouTube Music. Spotify está en beta: los controles solo se activan si se detecta un reproductor AVFoundation compatible. Vuelve a abrir la app tras activarlo.")\n'
         '                            .font(.caption)\n'
         '                            .foregroundStyle(.secondary)\n'
         '                        if audioProbeEnabled {\n'

@@ -106,7 +106,8 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     return gMBAudioGuest.length && gMBAudioObjects != nil &&
            [gMBAudioGuest isEqualToString:NSUserDefaults.lcGuestAppId.lowercaseString] &&
            [NSUserDefaults.lcSharedDefaults boolForKey:@"MediaBloomAudioProbeEnabledV1"] &&
-           (gMBAudioAVPlayerSetVolume || gMBAudioAVAudioPlayerSetVolume || gMBAudioAVRendererSetVolume);
+           (gMBAudioAVPlayerSetVolume || gMBAudioAVAudioPlayerSetVolume || gMBAudioAVRendererSetVolume) &&
+           (!MBIsSpotifyGuest(gMBAudioGuest) || MBSpotifyAudioAvailable());
 }
 
 // Only observe outside taps while the panel is open. The opening button
@@ -276,7 +277,9 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     self.slider.value = [saved respondsToSelector:@selector(floatValue)] ? MBClampVolume([saved floatValue]) : 1;
     BOOL available = MBEdgeLocalGainAvailable();
     self.slider.enabled = available;
-    self.volumeUnavailable.text = MBIsSupportedGuest(guest) ? @"Activa BloomAudio" : @"No compatible";
+    self.volumeUnavailable.text = MBIsSpotifyGuest(guest)
+        ? (gMBAudioObjects ? @"Spotify: sin ruta AV" : @"Volumen Spotify desactivado")
+        : (MBIsSupportedGuest(guest) ? @"Activa BloomAudio" : @"No compatible");
     [self updateSpeakerIcon];
 }
 - (void)updateSpeakerIcon {

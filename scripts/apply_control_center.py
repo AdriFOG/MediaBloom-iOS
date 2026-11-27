@@ -83,13 +83,13 @@ struct MediaBloomControlBundle: WidgetBundle {
     # iOS Control Center and work from third-party apps without BloomBox.
     home = ROOT / "LiveContainerSwiftUI/Views/BloomBox/BloomBoxLauncherRoot.swift"
     home_text = home.read_text()
-    en = "Separate volume for YouTube and YouTube Music. Reopen the app after enabling, then use the floating speaker button during playback."
-    es = "Volumen independiente para YouTube y YouTube Music. Actívalo, vuelve a abrir la app y usa el botón flotante del altavoz mientras reproduce."
+    en = "Separate volume for YouTube and YouTube Music. Spotify support is an AVFoundation-only beta: controls are available only if a real compatible player is detected. Reopen the app after enabling."
+    es = "Volumen independiente para YouTube y YouTube Music. Spotify está en beta: los controles solo se activan si se detecta un reproductor AVFoundation compatible. Vuelve a abrir la app tras activarlo."
     assert home_text.count(en) == 1 and home_text.count(es) == 1
     home_text = home_text.replace(en,
-        "Separate volume for YouTube and YouTube Music. Reopen media playback after enabling. Use the floating speaker inside the player, or add the single MediaBloom Volume control from iOS Control Center > Add a Control to change both players from other apps.")
+        "Separate volume for YouTube and YouTube Music. Spotify AV volume is a separate experimental switch in Settings; native volume hooks are disabled. Reopen the app after enabling; use the floating speaker or add MediaBloom Volume from iOS Control Center > Add a Control.")
     home_text = home_text.replace(es,
-        "Volumen independiente para YouTube y YouTube Music. Actívalo y vuelve a abrir la reproducción. Usa el altavoz flotante dentro del reproductor o añade el control único MediaBloom Volumen desde Centro de control > Añadir un control para ajustar Música y Video desde otras apps.")
+        "Volumen independiente para YouTube y YouTube Music. El volumen AV de Spotify tiene su propio interruptor experimental en Ajustes; se retiró el hook nativo. Reabre la app después de activarlo; usa el altavoz flotante o añade MediaBloom Volumen desde Centro de control > Añadir un control.")
     home.write_text(home_text)
 
     print("PASS: standalone MediaBloom Control Center widget target + shared App Groups")
