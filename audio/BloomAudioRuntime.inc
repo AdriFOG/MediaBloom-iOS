@@ -22,10 +22,7 @@ static NSInteger MBSpotifyActiveAVPlayers(void);
 static NSInteger MBSpotifyRunningEngines(void);
 static void MBSpotifyReportAudioState(BOOL force);
 static void MBApplySpotifyEngineGain(void);
-static void MBSpotifyAUInstallHooks(void);
-static void MBSpotifyAUPublishStatus(void);
-static void MBSpotifyAUUpdateGain(float gain);
-static BOOL MBSpotifyAUHasConfirmedPCM(void);
+static void MBInstallAudioInspector(void);
 static float gMBAudioLastAppliedGain = 1.0f;
 static void MBStartVolumeOverlay(void);
 static void MBRefreshVolumeOverlayControls(void);
@@ -61,8 +58,7 @@ static BOOL MBIsSupportedGuest(NSString *identifier) {
 // Only expose volume controls when an observed AV player is playing or
 // a Spotify-hosted AVAudioEngine is running. Neither guarantees audibility.
 static BOOL MBSpotifyAudioAvailable(void) {
-    return MBSpotifyActiveAVPlayers() > 0 || MBSpotifyRunningEngines() > 0 ||
-           MBSpotifyAUHasConfirmedPCM();
+    return MBSpotifyActiveAVPlayers() > 0 || MBSpotifyRunningEngines() > 0;
 }
 
 static BOOL MBIsMediaHost(void) {
@@ -75,6 +71,7 @@ static BOOL MBIsMediaHost(void) {
 static float MBCurrentGain(void) {
     NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
     if (![shared boolForKey:@"MediaBloomAudioProbeEnabledV1"]) return 1.0f;
+    if (MBIsSpotifyGuest(gMBAudioGuest) && ![shared boolForKey:@"MediaBloomSpotifyAVVolumeV1"]) return 1.0f;
     NSString *key = [@"MediaBloomAudioGainV1." stringByAppendingString:gMBAudioGuest ?: @""];
     id value = [shared objectForKey:key];
     float slider = [value respondsToSelector:@selector(floatValue)]
@@ -114,7 +111,6 @@ static void MBApplyLiveGain(void) {
     }
     if (MBIsSpotifyGuest(gMBAudioGuest)) {
         MBApplySpotifyEngineGain();
-        MBSpotifyAUUpdateGain(MBCurrentGain());
     }
 }
 
@@ -346,6 +342,9 @@ static void MBInstallAudioHooks(void) {
     if (!MBIsMediaHost()) return;
     NSString *guest = NSUserDefaults.lcGuestAppId;
     if (!MBIsSupportedGuest(guest)) return;
+    // Spotify's old native hook caused immediate crashes. Only the separate,
+    // opt-in legacy AVFoundation experiment may install volume hooks here.
+    if (MBIsSpotifyGuest(guest) && ![NSUserDefaults.lcSharedDefaults boolForKey:@"MediaBloomSpotifyAVVolumeV1"]) return;
     if (![NSUserDefaults.lcSharedDefaults boolForKey:@"MediaBloomAudioProbeEnabledV1"]) {
         NSLog(@"[BloomAudio] disabled for %@", guest);
         return;
@@ -384,8 +383,7 @@ static void MBInstallAudioHooks(void) {
                 (IMP)MBSpotifyEngineStart);
             gMBSpotifyEngineStop = MBHookInstanceMethod(
                 @"AVAudioEngine", @selector(stop), (IMP)MBSpotifyEngineStop);
-            MBSpotifyAUInstallHooks();
-            MBSpotifyAUPublishStatus();
+            [NSUserDefaults.lcSharedDefaults removeObjectForKey:@"MediaBloomSpotifyAudioUnitStatusV1"];
             MBSpotifyReportAudioState(YES);
         }
 
@@ -398,7 +396,6 @@ static void MBInstallAudioHooks(void) {
             float gain = MBCurrentGain();
             if (MBIsSpotifyGuest(gMBAudioGuest)) {
                 MBSpotifyReportAudioState(NO);
-                MBSpotifyAUPublishStatus();
                 MBRefreshVolumeOverlayControls();
             }
             if (fabsf(gain - gMBAudioLastAppliedGain) < 0.001f) return;

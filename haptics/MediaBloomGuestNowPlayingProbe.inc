@@ -48,10 +48,25 @@ static void MBGuestAppendHapticEvent(NSString *event) {
     [shared synchronize];
 }
 
+static BOOL MBGuestSpotifyHapticsEnabled(void) {
+    return MBIsSpotifyGuest(NSUserDefaults.lcGuestAppId) &&
+        [NSUserDefaults.lcSharedDefaults boolForKey:@"MediaBloomSpotifyHapticsV1"];
+}
+
+static BOOL MBGuestCaptureWanted(void) {
+    return [NSUserDefaults.lcSharedDefaults boolForKey:kMBGuestProbeEnabled] || MBGuestSpotifyHapticsEnabled();
+}
+
+static BOOL MBGuestAutoHapticsWanted(void) {
+    if (MBIsSpotifyGuest(NSUserDefaults.lcGuestAppId)) return MBGuestSpotifyHapticsEnabled();
+    NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
+    return [shared boolForKey:kMBGuestProbeEnabled] && [shared boolForKey:@"MediaBloomHapticsAutoISRCV1"];
+}
+
 static void MBGuestInspectNowPlaying(void) {
     NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
     [shared synchronize];
-    if (![shared boolForKey:kMBGuestProbeEnabled]) return;
+    if (!MBGuestCaptureWanted()) return;
 
     gMBGuestSampleCount++;
     Class centerClass = NSClassFromString(@"MPNowPlayingInfoCenter");
@@ -89,11 +104,7 @@ static void MBGuestInspectNowPlaying(void) {
         }
     }
     // The official experiment only runs when explicitly opted in.
-    if (!MBIsSpotifyGuest(NSUserDefaults.lcGuestAppId)) {
-        // Spotify v1 is observation-only. Never modify Spotify's Now Playing
-        // metadata or try to activate official Music Haptics in this build.
-        MBMHInspectCurrentSong(info, title, artist, isrc);
-    }
+    if (MBGuestAutoHapticsWanted()) MBMHInspectCurrentSong(info, title, artist, isrc);
 
     // Heartbeat proves guest code executed; absence of metadata does not mean
     // the player stopped or that a song has no haptic track.
@@ -110,7 +121,7 @@ static void MBInstallGuestHapticsProbe(void) {
 
     NSUserDefaults *shared = NSUserDefaults.lcSharedDefaults;
     [shared synchronize];
-    if (![shared boolForKey:kMBGuestProbeEnabled]) return;
+    if (!MBGuestCaptureWanted()) return;
 
     dispatch_async(dispatch_get_main_queue(), ^{
         dlopen("/System/Library/Frameworks/MediaPlayer.framework/MediaPlayer", RTLD_LAZY);
@@ -118,18 +129,17 @@ static void MBInstallGuestHapticsProbe(void) {
         gMBGuestProbeReportedEmpty = NO;
         gMBGuestSongSignature = nil;
         MBGuestAppendHapticEvent(spotify
-            ? @"Spotify Now Playing probe loaded (read-only, no haptics mutation)"
+            ? @"Spotify Now Playing probe loaded (Music Haptics separately opt-in)"
             : @"Guest probe loaded in YouTube Music");
-        if (!spotify) MBMHStartGuestObserver();
+        MBMHStartGuestObserver();
         MBGuestInspectNowPlaying();
-        if (!spotify) MBMHUpdateGuestOverlay();
+        MBMHUpdateGuestOverlay();
         // Music Haptics should not wait for the 2-second diagnostics heartbeat.
         // Fast tick only reads in-process metadata; it never captures audio.
-        if (!spotify && [shared boolForKey:@"MediaBloomHapticsAutoISRCV1"]) {
+        if (MBGuestAutoHapticsWanted()) {
             MBGuestAppendHapticEvent(@"Fast Music Haptics sync enabled (0.5s checks)");
             [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *timer) {
-                if (![shared boolForKey:kMBGuestProbeEnabled] ||
-                    ![shared boolForKey:@"MediaBloomHapticsAutoISRCV1"]) {
+                if (!MBGuestAutoHapticsWanted()) {
                     [timer invalidate];
                     return;
                 }
@@ -139,7 +149,7 @@ static void MBInstallGuestHapticsProbe(void) {
         }
         [NSTimer scheduledTimerWithTimeInterval:spotify ? 0.75 : 2.0 repeats:YES block:^(NSTimer *timer) {
             [shared synchronize];
-            if (![shared boolForKey:kMBGuestProbeEnabled]) {
+            if (!MBGuestCaptureWanted()) {
                 [timer invalidate];
                 return;
             }

@@ -87,9 +87,9 @@ struct MediaBloomControlBundle: WidgetBundle {
     es = "Volumen independiente para YouTube y YouTube Music. Spotify está en beta: los controles solo se activan si se detecta un reproductor AVFoundation compatible. Vuelve a abrir la app tras activarlo."
     assert home_text.count(en) == 1 and home_text.count(es) == 1
     home_text = home_text.replace(en,
-        "Separate volume for YouTube and YouTube Music. Spotify is an AVFoundation-only beta, with controls enabled only after a compatible player is found. Reopen the app after enabling; use the floating speaker or add MediaBloom Volume from iOS Control Center > Add a Control.")
+        "Separate volume for YouTube and YouTube Music. Spotify AV volume is a separate experimental switch in Settings; native volume hooks are disabled. Reopen the app after enabling; use the floating speaker or add MediaBloom Volume from iOS Control Center > Add a Control.")
     home_text = home_text.replace(es,
-        "Volumen independiente para YouTube y YouTube Music. Spotify es beta: necesita detectar un reproductor AVFoundation compatible. Reabre la app después de activarlo; usa el altavoz flotante o añade MediaBloom Volumen desde Centro de control > Añadir un control.")
+        "Volumen independiente para YouTube y YouTube Music. El volumen AV de Spotify tiene su propio interruptor experimental en Ajustes; se retiró el hook nativo. Reabre la app después de activarlo; usa el altavoz flotante o añade MediaBloom Volumen desde Centro de control > Añadir un control.")
     home.write_text(home_text)
 
     print("PASS: standalone MediaBloom Control Center widget target + shared App Groups")

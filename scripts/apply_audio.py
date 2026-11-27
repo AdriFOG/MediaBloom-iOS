@@ -39,6 +39,9 @@ def main():
         '    MBInstallAudioHooks();\n',
         "TweakLoader injection call",
     )
+    loader = replace_once(loader, "    MBInstallAudioHooks();\n",
+                          "    MBInstallAudioHooks();\n    MBInstallAudioInspector();\n",
+                          "Independent inspector entry")
     LOADER.write_text(loader)
 
     swift = SWIFT.read_text()

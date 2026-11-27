@@ -278,7 +278,7 @@ static BOOL MBEdgeLocalGainAvailable(void) {
     BOOL available = MBEdgeLocalGainAvailable();
     self.slider.enabled = available;
     self.volumeUnavailable.text = MBIsSpotifyGuest(guest)
-        ? (gMBAudioObjects ? @"Spotify: sin ruta AV" : @"Activa BloomAudio")
+        ? (gMBAudioObjects ? @"Spotify: sin ruta AV" : @"Volumen Spotify desactivado")
         : (MBIsSupportedGuest(guest) ? @"Activa BloomAudio" : @"No compatible");
     [self updateSpeakerIcon];
 }

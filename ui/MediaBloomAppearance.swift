@@ -207,6 +207,16 @@ struct MediaBloomAppearanceSheet: View {
     @State private var spotifyAudioUnitReport = ""
     @AppStorage("MediaBloomHapticsAutoISRCV1", store: LCUtils.appGroupUserDefault)
     private var automaticMusicHaptics = false
+    @AppStorage("MediaBloomSpotifyHapticsV1", store: LCUtils.appGroupUserDefault)
+    private var spotifyHaptics = false
+    @AppStorage("MediaBloomSpotifyAVVolumeV1", store: LCUtils.appGroupUserDefault)
+    private var spotifyAVVolume = false
+    @AppStorage("MediaBloomInspectorV1", store: LCUtils.appGroupUserDefault)
+    private var inspectorEnabled = false
+    @AppStorage("MediaBloomInspectorTraceV1", store: LCUtils.appGroupUserDefault)
+    private var inspectorTrace = false
+    @State private var inspectorLog = ""
+    @State private var exportInspector = false
     @AppStorage("MediaBloomHapticsGuestOverlayV1", store: LCUtils.appGroupUserDefault)
     private var showHapticsInPlayer = true
 
@@ -222,7 +232,8 @@ struct MediaBloomAppearanceSheet: View {
         spotifyActiveAVPlayers = shared.integer(forKey: "MediaBloomSpotifyActivePlayersV2")
         spotifyActiveAudioEngines = shared.integer(forKey: "MediaBloomSpotifyActiveEnginesV2")
         spotifyAudioReport = shared.string(forKey: "MediaBloomSpotifyAudioDetailsV2") ?? ""
-        spotifyAudioUnitReport = shared.string(forKey: "MediaBloomSpotifyAudioUnitStatusV1") ?? ""
+        spotifyAudioUnitReport = ""
+        inspectorLog = shared.string(forKey: "MediaBloomInspectorLogV1") ?? ""
     }
 
     var body: some View {
@@ -233,6 +244,7 @@ struct MediaBloomAppearanceSheet: View {
                 glassSection
                 mediaTagsSection
                 audioSection
+                tweaksSection
                 edgeSection
                 hapticsSection
                 advancedSection
@@ -253,6 +265,8 @@ struct MediaBloomAppearanceSheet: View {
                 haptics.refresh(english: english)
                 refreshSpotifyAudioStatus()
             }
+            .fileExporter(isPresented: $exportInspector, document: MBInspectorLogDocument(content: inspectorLog),
+                          contentType: MBInspectorLogDocument.logType, defaultFilename: "BloomAudio-Inspector.log") { _ in }
             .sheet(isPresented: $showEdgeAppPicker) {
                 MBEdgeAppPicker(english: english)
             }
@@ -396,6 +410,38 @@ struct MediaBloomAppearanceSheet: View {
             Text(t("Después de activarlo, vuelve a abrir las apps multimedia. El volumen general se combina con el volumen individual.",
                    "Reopen media apps after enabling. Master and individual gain combine."))
                 .font(.footnote).foregroundColor(.secondary)
+        }
+    }
+
+    private var tweaksSection: some View {
+        Section(header: Text(t("Tweaks experimentales", "Experimental tweaks"))) {
+            Toggle(t("Music Haptics · Spotify", "Music Haptics · Spotify"), isOn: $spotifyHaptics)
+            Toggle(t("Volumen AV · Spotify (experimental)", "AV volume · Spotify (experimental)"), isOn: $spotifyAVVolume)
+                .disabled(!audioEnabled)
+            Toggle("BloomAudio Inspector", isOn: $inspectorEnabled)
+            Toggle(t("Rastreo de funciones (experimental)", "Function tracing (experimental)"), isOn: $inspectorTrace)
+                .disabled(!inspectorEnabled)
+            Text(t("Los cuatro ajustes son independientes. Cierra y vuelve a abrir el reproductor para aplicar cambios. El inspector pasivo no modifica audio. El rastreo de funciones puede fallar o causar un cierre; úsalo por separado. Volumen AV requiere BloomAudio y no garantiza controlar Spotify.",
+                   "Reopen the player after changing settings. Passive inspection does not modify audio. Function tracing may fail or crash; test it separately. AV volume requires BloomAudio and may not control Spotify."))
+                .font(.footnote).foregroundColor(.secondary)
+            Button { refreshSpotifyAudioStatus() } label: {
+                Label(t("Actualizar registro", "Refresh log"), systemImage: "arrow.clockwise")
+            }
+            if !inspectorLog.isEmpty {
+                Text(inspectorLog.components(separatedBy: "\n").suffix(6).joined(separator: "\n"))
+                    .font(.caption2.monospaced()).textSelection(.enabled)
+                Button { UIPasteboard.general.string = inspectorLog } label: {
+                    Label(t("Copiar registro completo", "Copy full log"), systemImage: "doc.on.doc")
+                }
+                Button { exportInspector = true } label: {
+                    Label(t("Exportar archivo .log", "Export .log file"), systemImage: "square.and.arrow.up")
+                }
+            }
+            Button(role: .destructive) {
+                LCUtils.appGroupUserDefault.removeObject(forKey: "MediaBloomInspectorLogV1")
+                LCUtils.appGroupUserDefault.synchronize()
+                inspectorLog = ""
+            } label: { Label(t("Borrar registro", "Clear log"), systemImage: "trash") }
         }
     }
 
@@ -982,5 +1028,19 @@ private struct MBEdgeAppPicker: View {
         }
         .navigationViewStyle(.stack)
         .preferredColorScheme(.light)
+    }
+}
+
+
+private struct MBInspectorLogDocument: FileDocument {
+    static var logType: UTType { UTType(filenameExtension: "log") ?? .plainText }
+    static var readableContentTypes: [UTType] { [logType, .plainText] }
+    var content: String
+    init(content: String) { self.content = content }
+    init(configuration: ReadConfiguration) throws {
+        content = String(decoding: configuration.file.regularFileContents ?? Data(), as: UTF8.self)
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: Data(content.utf8))
     }
 }

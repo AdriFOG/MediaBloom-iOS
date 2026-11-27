@@ -54,7 +54,7 @@ assert 'AVAudioEngine' in tweak
 assert 'startAndReturnError:' in tweak
 assert 'MBSpotifyRunningEngines(void)' in tweak
 assert 'MBSpotifyActiveAVPlayers(void)' in tweak
-assert 'return MBSpotifyActiveAVPlayers() > 0 || MBSpotifyRunningEngines() > 0 ||' in tweak
+assert 'return MBSpotifyActiveAVPlayers() > 0 || MBSpotifyRunningEngines() > 0;' in tweak
 assert 'MBSpotifySetMixerGain(id engine, float gain)' in tweak
 assert 'MBSpotifyMainMixer(id engine)' in tweak
 assert 'MediaBloomSpotifyAudioDiagnosticV2' in tweak
@@ -69,27 +69,21 @@ assert 'AudioQueueSetParameter' not in tweak
 assert 'setOutputVolume:' in tweak
 assert 'MPVolumeView' not in tweak
 
-# Spotify AudioUnit probe must be isolated to this guest, processed only
-# after a successful callback, and never touch hardware or capture audio.
-assert "MBSpotifyAUInstallHooks();" in tweak
-assert "MBSpotifyAUHasConfirmedPCM();" in tweak
-assert "MBSpotifyAUPublishStatus();" in tweak
-assert "MBSpotifyAURenderCallback" in tweak
-assert "AudioUnitSetProperty" in tweak
-assert "AudioOutputUnitStart" in tweak
-assert "kAudioUnitProperty_SetRenderCallback" in tweak
-assert "kAudioFormatLinearPCM" in tweak
-assert "kAudioFormatFlagIsPacked" in tweak
-assert "kAudioUnitRenderAction_OutputIsSilence" in tweak
-assert "MBSpotifyAUOriginalSetProperty" in tweak
-assert "MediaBloomSpotifyAudioUnitStatusV1" in tweak
-assert "MediaBloomSpotifyAudioUnitStatusV1" in Path("../media-tools/ui/MediaBloomAppearance.swift").read_text()
-assert "MediaBloomSpotifyAudioUnit.inc" in Path("../media-tools/scripts/apply_audio.py").read_text()
-assert "Spotify · AudioUnit PCM beta" in tweak
-assert "AudioUnitRender(" not in tweak
-assert "AudioQueueSetParameter(" not in tweak
-assert "MediaBloomSpotifyAudioUnit" in tweak
-assert "SpotifyAudioProbeReadSnapshot" not in tweak
+# Independent passive inspector and optional scoped function trace.
+assert 'MBInstallAudioInspector();' in tweak
+assert 'MediaBloomSpotifyAVVolumeV1' in tweak
+assert 'MediaBloomInspectorV1' in tweak
+assert 'MediaBloomInspectorTraceV1' in tweak
+assert 'MediaBloomInspectorLogV1' in tweak
+assert 'MBIInstallTrace' in tweak
+assert 'litehook_rebind_symbol' in tweak
+assert 'MSHookFunction' not in tweak
+assert 'MBSpotifyAUInstallHooks' not in tweak
+assert 'MBSpotifyAURenderCallback' not in tweak
+assert 'gMBIOrigSet(u,p,s,e,v,n)' in tweak
+assert 'AudioQueueStart' in tweak and 'AudioOutputUnitStart' in tweak
+assert 'AudioUnitRender(' not in tweak
+assert 'MBInspectorLogDocument' in Path("../media-tools/ui/MediaBloomAppearance.swift").read_text()
 
 # More noticeable perceptual attenuation without ever amplifying.
 def gain(x):
