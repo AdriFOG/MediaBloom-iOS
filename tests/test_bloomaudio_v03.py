@@ -85,6 +85,23 @@ assert 'AudioQueueStart' in tweak and 'AudioOutputUnitStart' in tweak
 assert 'AudioUnitRender(' not in tweak
 assert 'MBInspectorLogDocument' in Path("../media-tools/ui/MediaBloomAppearance.swift").read_text()
 
+# Inspector v2 is limited to the verified loaded Spotify probe build.
+inspector = Path("../media-tools/audio/MediaBloomSpotifyAudioUnit.inc").read_text()
+assert 'MBISAPSnapshotSize = 440' in inspector
+assert 'MBISAPVerifiedImage(header)' in inspector
+assert 'RTLD_NOLOAD|RTLD_FIRST' in inspector
+assert 'owner.dli_fbase!=(const void *)header' in inspector
+assert 'gMBISAPRead(snapshot)' in inspector
+assert 'SpotifyAudioProbeReadSnapshot' in inspector
+assert 'SpotifyAudioProbeSetObserver' not in inspector
+assert 'SpotifyAudioProbeInitialize' not in inspector
+assert 'Spotify: read-only probe; no rebinding' in inspector
+assert 'bytes>gMBISAPPreviousBytes && nonzero>gMBISAPPreviousNonzero' in inspector
+assert 'MBISAPU64(snapshot,0x68)' in inspector
+assert 'MBISAPU64(snapshot,0x70)' in inspector
+assert 'MBISAPDouble(snapshot,0x90)' in inspector
+assert 'BloomAudio Inspector v2' in Path("../media-tools/ui/MediaBloomAppearance.swift").read_text()
+
 # More noticeable perceptual attenuation without ever amplifying.
 def gain(x):
     return 0.0 if x <= 0.0 else x**2.6

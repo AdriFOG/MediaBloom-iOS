@@ -418,12 +418,17 @@ struct MediaBloomAppearanceSheet: View {
             Toggle(t("Music Haptics · Spotify", "Music Haptics · Spotify"), isOn: $spotifyHaptics)
             Toggle(t("Volumen AV · Spotify (experimental)", "AV volume · Spotify (experimental)"), isOn: $spotifyAVVolume)
                 .disabled(!audioEnabled)
-            Toggle("BloomAudio Inspector", isOn: $inspectorEnabled)
+            Toggle("BloomAudio Inspector v2", isOn: $inspectorEnabled)
             Toggle(t("Rastreo de funciones (experimental)", "Function tracing (experimental)"), isOn: $inspectorTrace)
                 .disabled(!inspectorEnabled)
-            Text(t("Los cuatro ajustes son independientes. Cierra y vuelve a abrir el reproductor para aplicar cambios. El inspector pasivo no modifica audio. El rastreo de funciones puede fallar o causar un cierre; úsalo por separado. Volumen AV requiere BloomAudio y no garantiza controlar Spotify.",
-                   "Reopen the player after changing settings. Passive inspection does not modify audio. Function tracing may fail or crash; test it separately. AV volume requires BloomAudio and may not control Spotify."))
+            Text(t("Cierra y vuelve a abrir el reproductor. En Spotify, el inspector v2 consulta el probe compatible sin interceptar funciones. El rastreo avanzado solo afecta a otros reproductores y puede causar cierres. Volumen AV requiere BloomAudio y no garantiza controlar Spotify.",
+                   "Reopen the player. In Spotify, Inspector v2 reads a compatible probe without rebinding functions. Advanced tracing only affects other players and may crash. AV volume requires BloomAudio and may not control Spotify."))
                 .font(.footnote).foregroundColor(.secondary)
+            if inspectorEnabled {
+                Text(t("Spotify: si el registro muestra diagnostics_preference=0, actívalo en los ajustes del mod de Spotify y vuelve a abrirlo. El inspector no activa esa opción por sí solo.",
+                       "Spotify: if the log shows diagnostics_preference=0, enable Diagnostics in Spotify's mod settings and reopen the player. Inspector does not enable it automatically."))
+                    .font(.caption).foregroundColor(.secondary)
+            }
             Button { refreshSpotifyAudioStatus() } label: {
                 Label(t("Actualizar registro", "Refresh log"), systemImage: "arrow.clockwise")
             }
